@@ -2,9 +2,13 @@
 members = [
     "lib",
     "program",
-    "script",
+    "script"
 ]
 resolver = "2"
 
 [workspace.dependencies]
 alloy-sol-types = "1.0"
+tiny-keccak = {version = "2.0.2" , features = ["keccak"]}
+
+[patch.crates-io]
+tiny-keccak = { git = "https://github.com/sp1-patches/tiny-keccak", tag = "patch-2.0.2-sp1-4.0.0" }

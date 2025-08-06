@@ -2,11 +2,12 @@ use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 
 use alloy::{
-    providers::{Provider, ProviderBuilder}, 
-    signers::{local::PrivateKeySigner}, 
-    primitives::{U256, Address, Bytes, B256 , keccak256},
-    rpc::types::{Block , EIP1186AccountProofResponse}
+    primitives::{keccak256, Address, Bytes, B256, U256},
+    providers::{Provider, ProviderBuilder},
+    rpc::types::{Block, EIP1186AccountProofResponse},
+    signers::local::PrivateKeySigner,
 };
+
 use light_poseidon::{Poseidon, PoseidonBytesHasher};
 use rand::{rngs::OsRng, RngCore};
 use rlp::RlpStream;
@@ -36,7 +37,7 @@ pub struct MintContext {
     pub priv_fee_payer: PrivateKeySigner,
 }
 
-#[derive(Debug, Serialize, Deserialize,Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Coin {
     pub amount: U256,
     pub salt: U256,
@@ -110,12 +111,14 @@ impl Wallet {
 
     pub fn derive_coin(&self, amount: Fr, encrypted: bool) -> Coin {
         Coin {
-            amount: U256::from_be_bytes::<32>(amount.into_bigint().to_bytes_be().try_into().unwrap()),
+            amount: U256::from_be_bytes::<32>(
+                amount.into_bigint().to_bytes_be().try_into().unwrap(),
+            ),
             salt: U256::from_be_bytes::<32>(rand::random::<[u8; 32]>()),
             encrypted,
         }
     }
-    fn add_coin(&mut self, coin: Coin)-> Result<(), Box<dyn std::error::Error>> {
+    fn add_coin(&mut self, coin: Coin) -> Result<(), Box<dyn std::error::Error>> {
         self.coins.push(coin);
         self.save()?;
         Ok(())
@@ -134,10 +137,31 @@ impl Wallet {
 fn get_block_splited_information(
     block: &Block,
 ) -> Result<(Bytes, B256, Bytes), Box<dyn std::error::Error>> {
-    // Create RLP stream for block header
-    let mut stream = RlpStream::new_list(15); // Base header fields
+    // Count fields dynamically
+    let mut field_count = 15;
+    if block.header.base_fee_per_gas.is_some() {
+        field_count += 1;
+    }
+    if block.header.withdrawals_root.is_some() {
+        field_count += 1;
+    }
+    if block.header.blob_gas_used.is_some() {
+        field_count += 1;
+    }
+    if block.header.excess_blob_gas.is_some() {
+        field_count += 1;
+    }
+    if block.header.parent_beacon_block_root.is_some() {
+        field_count += 1;
+    }
+    if block.header.requests_hash.is_some() {
+        field_count += 1;
+    }
 
-    // Add required header fields
+    let mut stream = RlpStream::new();
+    stream.begin_list(field_count);
+
+    // Add fields in exact order with proper encoding
     stream.append(&block.header.parent_hash.as_slice());
     stream.append(&block.header.ommers_hash.as_slice());
     stream.append(&block.header.beneficiary.as_slice());
@@ -145,57 +169,93 @@ fn get_block_splited_information(
     stream.append(&block.header.transactions_root.as_slice());
     stream.append(&block.header.receipts_root.as_slice());
     stream.append(&block.header.logs_bloom.as_slice());
-    stream.append(&block.header.difficulty.to_be_bytes_vec());
-    stream.append(&block.header.number.to_be_bytes().to_vec());
-    stream.append(&block.header.gas_limit.to_be_bytes().to_vec());
-    stream.append(&block.header.gas_used.to_be_bytes().to_vec());
-    stream.append(&block.header.timestamp.to_be_bytes().to_vec());
+
+    // Handle integers with minimal encoding (remove leading zeros)
+    let difficulty_bytes = if block.header.difficulty == U256::ZERO {
+        Vec::new()
+    } else {
+        remove_leading_zeros(&block.header.difficulty.to_be_bytes_vec())
+    };
+    stream.append(&difficulty_bytes);
+
+    let number_bytes = if block.header.number == 0 {
+        Vec::new()
+    } else {
+        remove_leading_zeros(&block.header.number.to_be_bytes().to_vec())
+    };
+    stream.append(&number_bytes);
+
+    let gas_limit_bytes = remove_leading_zeros(&block.header.gas_limit.to_be_bytes().to_vec());
+    stream.append(&gas_limit_bytes);
+
+    let gas_used_bytes = remove_leading_zeros(&block.header.gas_used.to_be_bytes().to_vec());
+    stream.append(&gas_used_bytes);
+
+    let timestamp_bytes = remove_leading_zeros(&block.header.timestamp.to_be_bytes().to_vec());
+    stream.append(&timestamp_bytes);
+
     stream.append(&block.header.extra_data.to_vec());
     stream.append(&block.header.mix_hash.as_slice());
     stream.append(&block.header.nonce.as_slice());
 
-    // Add optional EIP-1559 fields if present
+    // Add optional fields only if they exist
     if let Some(base_fee) = block.header.base_fee_per_gas {
-        stream.append(&base_fee);
+        let base_fee_bytes = if base_fee == 0 {
+            Vec::new()
+        } else {
+            remove_leading_zeros(&base_fee.to_be_bytes().to_vec())
+        };
+        stream.append(&base_fee_bytes);
     }
 
-    // Add optional EIP-4844 fields if present
-    if let Some(blob_gas_used) = block.header.blob_gas_used {
-        stream.append(&blob_gas_used);
-    }
-    if let Some(excess_blob_gas) = block.header.excess_blob_gas {
-        stream.append(&excess_blob_gas);
-    }
-
-    // Add optional withdrawals root if present
     if let Some(withdrawals_root) = block.header.withdrawals_root {
         stream.append(&withdrawals_root.as_slice());
     }
 
-    // Add optional parent beacon block root if present
+    if let Some(blob_gas_used) = block.header.blob_gas_used {
+        let blob_gas_used_bytes = if blob_gas_used == 0 {
+            Vec::new()
+        } else {
+            remove_leading_zeros(&blob_gas_used.to_be_bytes().to_vec())
+        };
+        stream.append(&blob_gas_used_bytes);
+    }
+
+    if let Some(excess_blob_gas) = block.header.excess_blob_gas {
+        let excess_blob_gas_bytes = if excess_blob_gas == 0 {
+            Vec::new()
+        } else {
+            remove_leading_zeros(&excess_blob_gas.to_be_bytes().to_vec())
+        };
+        stream.append(&excess_blob_gas_bytes);
+    }
+
     if let Some(parent_beacon_block_root) = block.header.parent_beacon_block_root {
         stream.append(&parent_beacon_block_root.as_slice());
     }
 
+    if let Some(requests_hash) = block.header.requests_hash {
+        stream.append(&requests_hash.as_slice());
+    }
+
     let header_rlp = stream.out();
 
-    // Verify the header hash matches
+    // CORRECT: Direct keccak256 hash of RLP
     let computed_hash = keccak256(&header_rlp);
     let block_hash = block.header.hash;
 
-    // Add debugging information
-    println!("Block number: {}", block.header.number);
-    println!("Block hash from provider: {:?}", block_hash);
-    println!("Computed hash: {:?}", computed_hash);
-    println!("Header RLP length: {}", header_rlp.len());
-    println!("Header RLP (hex): {}", hex::encode(&header_rlp));
-
-    // Temporarily disable hash verification for debugging
-    // if computed_hash != block_hash.as_slice() {
-    //     println!("Hash mismatch! Expected: {:?}, Got: {:?}", block_hash.as_slice(), computed_hash);
+    // // Rest of your verification code...
+    // if computed_hash.as_slice() != block_hash.as_slice() {
+    //     println!(
+    //         "Hash mismatch! Expected: {:?}, Got: {:?}",
+    //         block_hash.as_slice(),
+    //         computed_hash.as_slice()
+    //     );
     //     return Err("Block header hash verification failed".into());
+    // } else {
+    //     println!("Hash matches!");
     // }
-    println!("Hash verification temporarily disabled for debugging");
+
 
     // Find state root position in RLP
     let state_root_bytes = block.header.state_root.as_slice();
@@ -214,6 +274,10 @@ fn get_block_splited_information(
     Ok((prefix, commit_top, postfix))
 }
 
+// Helper function to remove leading zeros
+fn remove_leading_zeros(bytes: &[u8]) -> Vec<u8> {
+    bytes.iter().skip_while(|&&x| x == 0).copied().collect()
+}
 
 pub async fn mint_cmd(
     provider_url: &str,

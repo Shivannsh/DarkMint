@@ -1,8 +1,10 @@
 #![no_main]
+use alloy_primitives::B256;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use light_poseidon::{Poseidon, PoseidonBytesHasher};
-use sha2::Digest;
+use tiny_keccak::{Hasher, Keccak};
+
 
 #[derive(Debug, Clone)]
 pub struct MptPathInputs {
@@ -31,6 +33,17 @@ pub fn poseidon_hash(left: Fr, right: Fr) -> Fr {
     Fr::from_le_bytes_mod_order(&hash_bytes)
 }
 
+pub fn keccak256<T: AsRef<[u8]>>(input: T) -> B256 {
+    let mut hasher = Keccak::v256();
+    let mut output = [0u8; 32];
+
+    hasher.update(input.as_ref());
+    hasher.finalize(&mut output);
+
+    B256::from(output)
+}
+
+
 /// Hash bytes using Poseidon (simplified version)
 pub fn hash_bytes_poseidon(bytes: &[u8]) -> Fr {
     if bytes.is_empty() {
@@ -45,14 +58,9 @@ pub fn hash_bytes_poseidon(bytes: &[u8]) -> Fr {
     Fr::from_le_bytes_mod_order(&hash_input)
 }
 
-/// Keccak-256 hash function (using SHA-256 as approximation)
-pub fn keccak256(data: &[u8]) -> [u8; 32] {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(data);
-    let result = hasher.finalize();
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(&result);
-    hash
+/// Keccak-256 hash function
+pub fn keccak256_hash(data: &[u8]) -> [u8; 32] {
+    keccak256(data).0
 }
 
 /// Check if a substring exists in a larger string
@@ -80,7 +88,7 @@ pub fn mpt_path_circuit(inputs: MptPathInputs) -> MptPathOutputs {
     let commit_lower = poseidon_hash(commit_lower_to_len, inputs.salt);
     
     // Calculate Keccak hash of lower layer
-    let keccak_lower_layer = keccak256(&inputs.lower_layer_bytes);
+    let keccak_lower_layer = keccak256_hash(&inputs.lower_layer_bytes);
     
     // Calculate commit_upper
     let upper_layer_hash = hash_bytes_poseidon(&inputs.upper_layer_bytes);
@@ -133,7 +141,7 @@ mod tests {
     #[test]
     fn test_keccak256() {
         let data = b"test data";
-        let hash = keccak256(data);
+        let hash = keccak256_hash(data);
         assert_eq!(hash.len(), 32);
         assert_ne!(hash, [0u8; 32]);
     }
@@ -152,7 +160,7 @@ mod tests {
     fn test_mpt_path_circuit_basic() {
         // Create test data where keccak(lower_layer) is contained in upper_layer
         let lower_layer = vec![2u8; 50];
-        let keccak_lower = keccak256(&lower_layer);
+        let keccak_lower = keccak256_hash(&lower_layer);
         let mut upper_layer = vec![1u8; 100];
         // Insert the keccak hash into the upper layer
         upper_layer[10..42].copy_from_slice(&keccak_lower);
@@ -196,7 +204,7 @@ mod tests {
         // For empty layers, keccak([]) will be a specific hash
         // We need to ensure it's NOT found in the upper layer when is_top = false
         let lower_layer = vec![];
-        let keccak_lower = keccak256(&lower_layer);
+        let keccak_lower = keccak256_hash(&lower_layer);
         let upper_layer = vec![1u8; 100]; // Upper layer doesn't contain the keccak hash
         
         let inputs = MptPathInputs {

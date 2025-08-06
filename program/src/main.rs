@@ -13,18 +13,10 @@ use alloy_sol_types::SolType;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use fibonacci_lib::PublicValuesStruct;
-use sha2::{digest::consts::U256, Digest};
 use fibonacci_lib::{mpt_last_circuit, MptLastInputs, MptPathInputs, mpt_path_circuit};
-
-/// Keccak-256 hash function (using SHA-256 as approximation)
-fn keccak256(data: &[u8]) -> [u8; 32] {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(data);
-    let result = hasher.finalize();
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(&result);
-    hash
-}
+use alloy_primitives::{B256};
+use tiny_keccak::{Hasher, Keccak};
+use hex;
 
 /// Check if a substring exists in a larger string
 fn substring_check(substring: &[u8], main_string: &[u8]) -> bool {
@@ -38,6 +30,17 @@ fn substring_check(substring: &[u8], main_string: &[u8]) -> bool {
         }
     }
     false
+}
+
+pub fn keccak256<T: AsRef<[u8]>>(input: T) -> B256 {
+
+    let mut hasher = Keccak::v256();
+    let mut output = [0u8; 32];
+
+    hasher.update(input.as_ref());
+    hasher.finalize(&mut output);
+
+    B256::from(output)
 }
 
 pub fn main() {
@@ -55,7 +58,7 @@ pub fn main() {
     let encrypted = sp1_zkvm::io::read::<bool>();
 
     // Convert inputs to the appropriate types for the circuit
-    let burn_preimage_fr = Fr::from_le_bytes_mod_order(burn_preimage.as_slice());
+    let burn_preimage_fr = Fr::from_be_bytes_mod_order(burn_preimage.as_slice());
     let salt_fr = Fr::from(salt);
 
     println!("burn_preimage: {:?}", burn_preimage_fr);
@@ -63,8 +66,8 @@ pub fn main() {
     println!("lower_layer_prefix: {:?}", lower_layer_prefix);
     println!("nonce: {}", nonce);
     println!("balance: {}", balance);
-    println!("storage_hash: {:?}", storage_hash);
-    println!("code_hash: {:?}", code_hash);
+    println!("storage_hash: 0x{}", hex::encode(storage_hash));
+    println!("code_hash: 0x{}", hex::encode(code_hash));
 
         // Create the circuit inputs
         let inputs = MptLastInputs {
@@ -120,15 +123,17 @@ pub fn main() {
             if index == rev_proof.len() - 1 {
                 // Last level - verify against state root
                 let level_hash = keccak256(level);
-                if level_hash != state_root {
+                let level_hash_bytes = level_hash.as_slice();
+                let state_root_bytes = state_root.as_slice();
+                if level_hash_bytes != state_root_bytes {
                     panic!("State root verification failed!");
                 }
                 
                 // Generate root proof using MPT path circuit
                 let root_proof_inputs = MptPathInputs {
                     is_top: true,
-                    num_upper_layer_bytes: state_root.len() as u32,
-                    upper_layer_bytes: state_root.to_vec(),
+                    num_upper_layer_bytes: 1,  // When is_top is true, use 1
+                    upper_layer_bytes: vec![0; 136],  // Use zeros when is_top is true
                     num_lower_layer_bytes: level.len() as u32,
                     lower_layer_bytes: level.clone(),
                     salt: salt_fr,
@@ -147,7 +152,7 @@ pub fn main() {
                 let level_hash = keccak256(level);
                 let next_level = &rev_proof[index + 1];
                 
-                if !substring_check(&level_hash, next_level) {
+                if !substring_check(level_hash.as_slice(), next_level) {
                     panic!("MPT path verification failed at level {}!", index);
                 }
                 

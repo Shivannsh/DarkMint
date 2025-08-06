@@ -1,7 +1,9 @@
 #![no_main]
+use alloy_primitives::B256;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use light_poseidon::{Poseidon, PoseidonBytesHasher};
+use tiny_keccak::{Hasher, Keccak};
 
 #[derive(Debug, Clone)]
 pub struct MptLastInputs {
@@ -34,15 +36,19 @@ pub fn poseidon_hash(left: Fr, right: Fr) -> Fr {
     Fr::from_le_bytes_mod_order(&hash_bytes)
 }
 
-/// Hash address using Keccak-256 (simplified version)
+pub fn keccak256<T: AsRef<[u8]>>(input: T) -> B256 {
+    let mut hasher = Keccak::v256();
+    let mut output = [0u8; 32];
+
+    hasher.update(input.as_ref());
+    hasher.finalize(&mut output);
+
+    B256::from(output)
+}
+
+/// Hash address using Keccak-256
 pub fn hash_address(address: &[u8; 20]) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(address);
-    let result = hasher.finalize();
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(&result);
-    hash
+    keccak256(address).0
 }
 
 /// RLP encoding for account data
@@ -50,8 +56,9 @@ pub fn rlp_encode_account(nonce: u64, balance: u128, storage_hash: &[u8; 32], co
     use rlp::RlpStream;
     
     let mut stream = RlpStream::new_list(4);
-    stream.append(&nonce);
-    stream.append(&balance);
+    // Convert to big-endian for RLP encoding
+    stream.append(&nonce.to_be_bytes().as_slice());
+    stream.append(&balance.to_be_bytes().as_slice());
     stream.append(&storage_hash.as_slice());
     stream.append(&code_hash.as_slice());
     stream.out().to_vec()

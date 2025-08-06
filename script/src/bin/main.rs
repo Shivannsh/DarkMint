@@ -16,17 +16,21 @@ use burn::burn_cmd;
 use mint::{mint_cmd, BurnAddress, Coin, MintContext};
 
 use alloy::{
-    primitives::{Address, Bytes, B256},
+    primitives::{Bytes, B256},
     rpc::types::{Block, EIP1186AccountProofResponse},
 };
-use alloy_sol_types::SolType;
+use tiny_keccak::{Hasher, Keccak};
+
 use clap::Parser;
-use fibonacci_lib::PublicValuesStruct;
+
 use rlp::RlpStream;
-use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
-use std::str::FromStr;
+use sp1_sdk::{include_elf, ProverClient, SP1Stdin, HashableKey};
+
 use rustls::crypto::ring::default_provider;
 use rustls::crypto::CryptoProvider;
+use sp1_zkv_sdk::*; // for the `convert_to_zkv` and `hash_bytes` methods.
+use std::{fs::File, io::Write};
+use serde::{Deserialize, Serialize};
 
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
@@ -61,12 +65,56 @@ struct Args {
     provider_url: String,
 }
 
+// Struct of the output we need
+#[derive(Serialize, Deserialize)]
+struct Output{
+    image_id: String,
+    pub_inputs: String,
+    proof: String
+}
+
+// Helper function to get hex strings
+fn to_hex_with_prefix(bytes: &[u8]) -> String {
+    let hex_string: String = bytes.iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
+    format!("0x{}", hex_string)
+}
+
+
+pub fn keccak256<T: AsRef<[u8]>>(input: T) -> B256 {
+    let mut hasher = Keccak::v256();
+    let mut output = [0u8; 32];
+
+    hasher.update(input.as_ref());
+    hasher.finalize(&mut output);
+
+    B256::from(output)
+}
+
 /// Calculate lower layer prefix from MPT proof
 fn calculate_lower_layer_prefix(proof: &EIP1186AccountProofResponse) -> (u32, Vec<u8>) {
-    // RLP encode the account data
+    // RLP encode the account data according to Ethereum's format
     let mut stream = RlpStream::new_list(4);
-    stream.append(&proof.nonce);
-    stream.append(&proof.balance.to_be_bytes_vec());
+    // Remove leading zeros from nonce
+    let nonce_bytes: Vec<u8> = proof
+        .nonce
+        .to_be_bytes()
+        .into_iter()
+        .skip_while(|&x| x == 0)
+        .collect();
+    stream.append(&nonce_bytes);
+
+    // Remove leading zeros from balance
+    let balance_bytes: Vec<u8> = proof
+        .balance
+        .to_be_bytes::<32>()
+        .into_iter()
+        .skip_while(|&x| x == 0)
+        .collect();
+    stream.append(&balance_bytes);
+
+    // Storage and code hash are already 32 bytes
     stream.append(&proof.storage_hash.as_slice());
     stream.append(&proof.code_hash.as_slice());
     let account_rlp = stream.out();
@@ -74,17 +122,31 @@ fn calculate_lower_layer_prefix(proof: &EIP1186AccountProofResponse) -> (u32, Ve
     // Get the last proof element (the account proof)
     let account_proof = proof.account_proof.last().unwrap();
 
-    // Calculate the prefix by removing the account RLP from the end
-    let prefix_len = account_proof.len() - account_rlp.len();
-    let lower_layer_prefix = account_proof[..prefix_len].to_vec();
+    // Debug prints
+    println!("Generated RLP: 0x{}", hex::encode(&account_rlp));
+    println!("Account proof: 0x{}", hex::encode(account_proof));
+    println!("RLP length: {}", account_rlp.len());
+    println!("Proof length: {}", account_proof.len());
 
-    (prefix_len as u32, lower_layer_prefix)
+    // Find where the account RLP starts in the proof
+    for i in 0..account_proof.len() {
+        if i + account_rlp.len() <= account_proof.len() {
+            let window = &account_proof[i..i + account_rlp.len()];
+            if window == &account_rlp[..] {
+                let prefix = account_proof[..i].to_vec();
+                return (i as u32, prefix);
+            }
+        }
+    }
+
+    // If we get here, we couldn't find the RLP in the proof
+    panic!("Could not find account RLP in proof. This could mean the RLP encoding format doesn't match the Ethereum specification.");
 }
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize rustls crypto provider
     CryptoProvider::install_default(default_provider()).expect("Failed to install crypto provider");
-   
+
     // Setup the logger.
     sp1_sdk::utils::setup_logger();
     dotenv::dotenv().ok();
@@ -152,11 +214,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         stdin.write(&lower_layer_prefix_len);
         stdin.write(&lower_layer_prefix);
         stdin.write(&proof.nonce);
-        stdin.write(&proof.balance);
-        stdin.write(&proof.storage_hash);
-        stdin.write(&proof.code_hash);
+        stdin.write(&(proof.balance.to::<u128>())); // Convert U256 to u128
+        stdin.write(&proof.storage_hash.0); // Convert B256 to [u8; 32]
+        stdin.write(&proof.code_hash.0); // Convert B256 to [u8; 32]
         stdin.write(&proof.account_proof);
-        stdin.write(&block.header.state_root);
+        stdin.write(&block.header.state_root.0); // Convert B256 to [u8; 32]
         stdin.write(&coin.salt);
         stdin.write(&coin.encrypted);
 
@@ -169,11 +231,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Generate the proof
         let proof = client
             .prove(&pk, &stdin)
-            .groth16()
+            .compressed()
             .run()
             .expect("failed to generate proof");
         println!("proof");
-        
+
+        // Convert proof and vk into a zkVerify-compatible proof.
+        let SP1ZkvProofWithPublicValues {
+            proof: shrunk_proof,
+            public_values,
+        } = client
+            .convert_proof_to_zkv(proof.clone(), Default::default())
+            .unwrap();
+        let vk_hash = vk.hash_bytes();
+
+        // Serialize the proof
+        let serialized_proof =
+            bincode::serde::encode_to_vec(&shrunk_proof, bincode::config::legacy())
+                .expect("failed to serialize proof");
+
+        // Convert to required struct
+        let output = Output{
+            proof: to_hex_with_prefix(&serialized_proof),
+            image_id: to_hex_with_prefix(&vk_hash),
+            pub_inputs: to_hex_with_prefix(&public_values),
+        };
+
+        // Convert to JSON and store in the file
+        let json_string =
+            serde_json::to_string_pretty(&output).expect("Failed to serialize to JSON.");
+
+        let mut file = File::create("proof.json").unwrap();
+        file.write_all(json_string.as_bytes()).unwrap();
+
         // Verify the proof.
         client.verify(&proof, &vk).expect("failed to verify proof");
         println!("Successfully verified proof!");

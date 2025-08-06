@@ -4,6 +4,10 @@ name = "fibonacci-script"
 edition = "2021"
 default-run = "fibonacci"
 
+[lib]
+name = "fibonacci_script"
+path = "src/lib.rs"
+
 [[bin]]
 name = "fibonacci"
 path = "src/bin/main.rs"
@@ -20,12 +24,11 @@ path = "src/bin/vkey.rs"
 name = "mint"
 path = "src/bin/mint.rs"
 
-[[bin]]
-name = "burn"
-path = "src/bin/burn.rs"
+
+
 
 [dependencies]
-sp1-sdk = { version = "5.0.8", features = ["network"]}
+sp1-sdk = { version = "5.2.1", features = ["network"]}
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde = { version = "1.0.200", default-features = false, features = ["derive"] }
 clap = { version = "4.0", features = ["derive", "env"] }
@@ -43,7 +46,11 @@ rand = "0.8"
 sha2 = "0.10.9"
 tokio = { version = "1.0", features = ["full"] }
 rustls = { version = "0.23", features = ["ring"] }
-
+tiny-keccak ={version = "2.0.2" , features = ["keccak"]}
+bincode = { version = "2", features = ["serde"] }
+sp1-zkv-sdk = { git="https://github.com/zkVerify/sp1-verifier" }
 
 [build-dependencies]
-sp1-build = "5.0.8"
+sp1-build = "5.2.1"
+
+    
