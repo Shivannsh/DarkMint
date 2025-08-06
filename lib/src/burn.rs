@@ -1,11 +1,12 @@
 use crate::mint::Wallet;
-use ethers::{
-    prelude::*,
-    providers::{Http, Provider},
-    types::{U256},
+
+use alloy::{
+    providers::{Provider, ProviderBuilder}, 
+    rpc::types::TransactionRequest, 
+    signers::{local::PrivateKeySigner}, 
+    primitives::{U256},
 };
 use std::io::{self, Write};
-use std::str::FromStr;
 use clap::Parser;
 
 
@@ -35,16 +36,18 @@ pub async fn burn_cmd(
 ) -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::parse();
-    let context = BurnContext::new(args.amount, args.priv_src);
-    let provider = Provider::<Http>::try_from(args.provider_url)?;
+    let signer: PrivateKeySigner = args.priv_src.parse()?;
+    let context = BurnContext::new(args.amount, args.priv_src.clone());
+    
+    let provider = ProviderBuilder::new().wallet(signer.clone()).connect(args.provider_url.as_str()).await?; 
     let wallet = Wallet::open_or_create()?;
 
     // Find a burn address with zero balance
     let mut burn_addr = None;
     for i in 0..10 {
         let burn_address = wallet.derive_burn_addr(i)?;
-        let balance = provider.get_balance(burn_address.address, None).await?;
-        if balance == U256::zero() {
+        let balance = provider.get_balance(burn_address.address).await?;
+        if balance == U256::ZERO {
             burn_addr = Some(burn_address);
             break;
         }
@@ -66,36 +69,32 @@ pub async fn burn_cmd(
         // Convert ETH to Wei
         let amount_wei = U256::from((context.amount * 1e18) as u64);
 
-        // Create account from private key
-        let mut account = LocalWallet::from_str(&context.priv_src)?;
-        account = account.with_chain_id(11155111u64); // Set Sepolia chain ID
+        let account = signer.address();
 
         // Get gas price
         let _gas_price = provider.get_gas_price().await?;
 
         // Get nonce
         let nonce = provider
-            .get_transaction_count(account.address(), None)
+            .get_transaction_count(account)
             .await?;
 
         // Create transaction
-        let tx = TransactionRequest::new()
-            .from(account.address())
+        let tx = TransactionRequest::default()
+            .from(account)
             .to(burn_addr.address)
             .value(amount_wei)
             .nonce(nonce)
-            .gas(21000);
+            .gas_limit(21000);
 
-        // Sign and send transaction
-        let client = SignerMiddleware::new(provider, account);
-        let pending_tx = client.send_transaction(tx, None).await?;
-        let receipt = pending_tx.await?;
+        // Send transaction (provider handles signing automatically)
+        let pending_tx = provider.send_transaction(tx).await?;
 
-        if let Some(receipt) = receipt {
-            println!("Transaction sent! Hash: {:?}", receipt.transaction_hash);
-        } else {
-            println!("Transaction sent but no receipt received.");
-        }
+        println!("Pending transaction... {}", pending_tx.tx_hash());
+
+        let receipt = pending_tx.get_receipt().await?;
+
+        println!("Transaction sent! Hash: {:?}", receipt.transaction_hash);
     } else {
         println!("Burn cancelled.");
     }

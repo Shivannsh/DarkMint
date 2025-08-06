@@ -21,7 +21,7 @@ name = "burn"
 path = "src/bin/burn.rs"
 
 [dependencies]
-sp1-sdk = "5.0.8"
+sp1-sdk = { version = "5.0.8", default-features = false }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde = { version = "1.0.200", default-features = false, features = ["derive"] }
 clap = { version = "4.0", features = ["derive", "env"] }
@@ -32,9 +32,8 @@ fibonacci-lib = { path = "../lib" }
 dotenv = "0.15.0"
 ark-bn254 = "0.5.0"
 ark-ff = "0.5.0"
-ethers = "2.0.14"
-rlp = "0.6.1"
-
+rlp = "0.5.1"
+alloy="1.0.1"
 
 [build-dependencies]
 sp1-build = "5.0.8"

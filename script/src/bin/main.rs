@@ -12,9 +12,9 @@
 
 use alloy_sol_types::SolType;
 use clap::Parser;
-use ethers::{
-    core::types::{Address, Block, Bytes, TxHash, H256},
-    types::EIP1186ProofResponse,
+use alloy::{
+    primitives::{Address, Bytes, B256},
+    rpc::types::{Block, EIP1186AccountProofResponse},
 };
 use fibonacci_lib::{
     burn,
@@ -54,7 +54,7 @@ struct Args {
 }
 
 /// Calculate lower layer prefix from MPT proof
-fn calculate_lower_layer_prefix(proof: &EIP1186ProofResponse) -> (u32, Vec<u8>) {
+fn calculate_lower_layer_prefix(proof: &EIP1186AccountProofResponse) -> (u32, Vec<u8>) {
     // RLP encode the account data
     let mut stream = RlpStream::new_list(4);
     stream.append(&proof.nonce);
@@ -95,11 +95,11 @@ async fn main() {
 
     let (burn_addr, block, proof, coin, prefix, state_root, postfix): (
         BurnAddress,
-        Block<TxHash>,
-        EIP1186ProofResponse,
+        Block,
+        EIP1186AccountProofResponse,
         Coin,
         Bytes,
-        H256,
+        B256,
         Bytes,
     ) = mint_cmd(&args.provider_url, context).await?;
 
@@ -128,7 +128,7 @@ async fn main() {
     stdin.write(&proof.storage_hash);
     stdin.write(&proof.code_hash);
     stdin.write(&proof.account_proof);
-    stdin.write(&block.state_root);
+    stdin.write(&block.header.state_root);
     stdin.write(&coin.salt);
     stdin.write(&coin.encrypted);
 

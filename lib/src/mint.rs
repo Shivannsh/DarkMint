@@ -1,8 +1,11 @@
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use ethers::{
-    prelude::*,
-    providers::{Http, Provider},
+
+use alloy::{
+    providers::{Provider, ProviderBuilder}, 
+    signers::{local::PrivateKeySigner}, 
+    primitives::{U256, Address, Bytes, B256 , keccak256},
+    rpc::types::{Block , EIP1186AccountProofResponse}
 };
 use light_poseidon::{Poseidon, PoseidonBytesHasher};
 use rand::{rngs::OsRng, RngCore};
@@ -30,7 +33,7 @@ pub struct MintContext {
     pub src_burn_addr: Address,
     pub dst_addr: Address,
     pub encrypted: bool,
-    pub priv_fee_payer: LocalWallet,
+    pub priv_fee_payer: PrivateKeySigner,
 }
 
 #[derive(Debug, Serialize, Deserialize,Clone)]
@@ -43,14 +46,12 @@ pub struct Coin {
 impl Coin {
     fn get_value(&self) -> U256 {
         if self.encrypted {
-            let mut left_bytes = [0u8; 32];
-            let mut right_bytes = [0u8; 32];
-            self.amount.to_big_endian(&mut left_bytes);
-            self.salt.to_big_endian(&mut right_bytes);
+            let left_bytes = self.amount.to_be_bytes::<32>();
+            let right_bytes = self.salt.to_be_bytes::<32>();
             let left = Fr::from_le_bytes_mod_order(&left_bytes);
             let right = Fr::from_le_bytes_mod_order(&right_bytes);
             let result = poseidon_hash(left, right);
-            U256::from_big_endian(&result.into_bigint().to_bytes_be())
+            U256::from_be_bytes::<32>(result.into_bigint().to_bytes_be().try_into().unwrap())
         } else {
             self.amount
         }
@@ -109,8 +110,8 @@ impl Wallet {
 
     pub fn derive_coin(&self, amount: Fr, encrypted: bool) -> Coin {
         Coin {
-            amount: U256::from_big_endian(&amount.into_bigint().to_bytes_be()),
-            salt: U256::from(rand::random::<[u8; 32]>()),
+            amount: U256::from_be_bytes::<32>(amount.into_bigint().to_bytes_be().try_into().unwrap()),
+            salt: U256::from_be_bytes::<32>(rand::random::<[u8; 32]>()),
             encrypted,
         }
     }
@@ -131,63 +132,63 @@ impl Wallet {
 
 // Placeholder for block splitting logic
 fn get_block_splited_information(
-    block: &Block<TxHash>,
-) -> Result<(Bytes, H256, Bytes), Box<dyn std::error::Error>> {
+    block: &Block,
+) -> Result<(Bytes, B256, Bytes), Box<dyn std::error::Error>> {
     // Create RLP stream for block header
     let mut stream = RlpStream::new_list(15); // Base header fields
 
     // Add required header fields
-    stream.append(&block.parent_hash.as_bytes());
-    stream.append(&block.uncles_hash.as_bytes());
-    stream.append(&block.author.unwrap_or_default().as_bytes());
-    stream.append(&block.state_root.as_bytes());
-    stream.append(&block.transactions_root.as_bytes());
-    stream.append(&block.receipts_root.as_bytes());
-    stream.append(&block.logs_bloom.unwrap_or_default().as_bytes());
-    stream.append(&block.difficulty);
-    stream.append(&block.number.unwrap_or_default());
-    stream.append(&block.gas_limit);
-    stream.append(&block.gas_used);
-    stream.append(&block.timestamp);
-    stream.append(&block.extra_data.to_vec());
-    stream.append(&block.mix_hash.unwrap_or_default().as_bytes());
-    stream.append(&block.nonce.unwrap_or_default().as_bytes());
+    stream.append(&block.header.parent_hash.as_slice());
+    stream.append(&block.header.ommers_hash.as_slice());
+    stream.append(&block.header.beneficiary.as_slice());
+    stream.append(&block.header.state_root.as_slice());
+    stream.append(&block.header.transactions_root.as_slice());
+    stream.append(&block.header.receipts_root.as_slice());
+    stream.append(&block.header.logs_bloom.as_slice());
+    stream.append(&block.header.difficulty.to_be_bytes_vec());
+    stream.append(&block.header.number.to_be_bytes().to_vec());
+    stream.append(&block.header.gas_limit.to_be_bytes().to_vec());
+    stream.append(&block.header.gas_used.to_be_bytes().to_vec());
+    stream.append(&block.header.timestamp.to_be_bytes().to_vec());
+    stream.append(&block.header.extra_data.to_vec());
+    stream.append(&block.header.mix_hash.as_slice());
+    stream.append(&block.header.nonce.as_slice());
 
     // Add optional EIP-1559 fields if present
-    if let Some(base_fee) = block.base_fee_per_gas {
+    if let Some(base_fee) = block.header.base_fee_per_gas {
         stream.append(&base_fee);
     }
 
     // Add optional EIP-4844 fields if present
-    if let Some(blob_gas_used) = block.blob_gas_used {
+    if let Some(blob_gas_used) = block.header.blob_gas_used {
         stream.append(&blob_gas_used);
     }
-    if let Some(excess_blob_gas) = block.excess_blob_gas {
+    if let Some(excess_blob_gas) = block.header.excess_blob_gas {
         stream.append(&excess_blob_gas);
     }
 
     // Add optional withdrawals root if present
-    if let Some(withdrawals_root) = block.withdrawals_root {
-        stream.append(&withdrawals_root.as_bytes());
+    if let Some(withdrawals_root) = block.header.withdrawals_root {
+        stream.append(&withdrawals_root.as_slice());
     }
 
     // Add optional parent beacon block root if present
-    if let Some(parent_beacon_block_root) = block.parent_beacon_block_root {
-        stream.append(&parent_beacon_block_root.as_bytes());
+    if let Some(parent_beacon_block_root) = block.header.parent_beacon_block_root {
+        stream.append(&parent_beacon_block_root.as_slice());
     }
 
     let header_rlp = stream.out();
 
     // Verify the header hash matches
-    let computed_hash = ethers::utils::keccak256(&header_rlp);
-    let block_hash = block.hash.unwrap_or_default();
+    let computed_hash = keccak256(&header_rlp);
+    let block_hash = block.header.hash;
 
-    if computed_hash != block_hash.as_bytes() {
+    if computed_hash != block_hash.as_slice() {
         return Err("Block header hash verification failed".into());
     }
 
     // Find state root position in RLP
-    let state_root_bytes = block.state_root.as_bytes();
+    let state_root_bytes = block.header.state_root.as_slice();
     let state_root_start = header_rlp
         .windows(state_root_bytes.len())
         .position(|window| window == state_root_bytes)
@@ -197,7 +198,7 @@ fn get_block_splited_information(
 
     // Split the header
     let prefix = Bytes::from(header_rlp[..state_root_start].to_vec());
-    let commit_top = block.state_root;
+    let commit_top = block.header.state_root;
     let postfix = Bytes::from(header_rlp[state_root_end..].to_vec());
 
     Ok((prefix, commit_top, postfix))
@@ -208,26 +209,28 @@ pub async fn mint_cmd(
 ) -> Result<
     (
         BurnAddress,
-        Block<TxHash>,
-        EIP1186ProofResponse,
+        Block,
+        EIP1186AccountProofResponse,
         Coin,
         Bytes,
-        H256,
+        B256,
         Bytes,
     ),
     Box<dyn std::error::Error>,
 > {
-    let provider = Provider::<Http>::try_from(provider_url)?;
-    let client = SignerMiddleware::new(provider, context.priv_fee_payer.clone());
+    let provider = ProviderBuilder::new()
+        .wallet(context.priv_fee_payer.clone())
+        .connect(provider_url)
+        .await?;
 
     let mut wallet = Wallet::open_or_create()?;
     let mut burn_addr: Option<BurnAddress> = None;
-    let mut amount = U256::zero();
+    let mut amount = U256::ZERO;
 
     for i in 0..10 {
         let b_addr = wallet.derive_burn_addr(i)?;
         if context.src_burn_addr == b_addr.address {
-            amount = client.get_balance(b_addr.address, None).await?;
+            amount = provider.get_balance(b_addr.address).await?;
             burn_addr = Some(b_addr);
             break;
         }
@@ -235,20 +238,19 @@ pub async fn mint_cmd(
 
     let burn_addr = burn_addr.ok_or("Burn address not found!")?;
 
-    let block_number = client.get_block_number().await?;
-    let mut amount_bytes = [0u8; 32];
-    amount.to_big_endian(&mut amount_bytes);
-    let amount_fr = Fr::from_le_bytes_mod_order(&amount_bytes);
+    let block_number = provider.get_block_number().await?;
+    let amount_fr = Fr::from_le_bytes_mod_order(&amount.to_be_bytes::<32>());
     let coin = wallet.derive_coin(amount_fr, context.encrypted);
     wallet.add_coin(coin.clone())?;
     let zero_fr = Fr::from(0u64);
     let nullifier = poseidon_hash(burn_addr.preimage, zero_fr);
-    let block = client
-        .get_block(block_number)
+    let block = provider
+        .get_block_by_number(block_number.into())
         .await?
         .ok_or("Block not found")?;
-    let proof = client
-        .get_proof(burn_addr.address, vec![], Some(block_number.into()))
+    let proof = provider
+        .get_proof(burn_addr.address, vec![])
+        .block_id(block_number.into())
         .await?;
 
     let (prefix, state_root, postfix) = get_block_splited_information(&block)?;
@@ -276,13 +278,13 @@ mod tests {
         // Test deriving burn address for index 0
         let burn_addr = wallet.derive_burn_addr(0).unwrap();
         println!("Burn address: {:?}", burn_addr);
-        assert!(burn_addr.address != Address::zero());
+        assert!(burn_addr.address != Address::ZERO);
         assert!(burn_addr.preimage != Fr::from(0u64));
 
         // Test deriving burn address for index 1
         let burn_addr_1 = wallet.derive_burn_addr(1).unwrap();
         println!("Burn address 1: {:?}", burn_addr_1);
-        assert!(burn_addr_1.address != Address::zero());
+        assert!(burn_addr_1.address != Address::ZERO);
         assert!(burn_addr_1.preimage != Fr::from(0u64));
 
         // Different indices should produce different addresses
@@ -343,8 +345,8 @@ mod tests {
         let burn_addr_1 = wallet.derive_burn_addr(u64::MAX).unwrap();
         let burn_addr_2 = wallet.derive_burn_addr(1000000).unwrap();
 
-        assert!(burn_addr_1.address != Address::zero());
-        assert!(burn_addr_2.address != Address::zero());
+        assert!(burn_addr_1.address != Address::ZERO);
+        assert!(burn_addr_2.address != Address::ZERO);
         assert_ne!(burn_addr_1.address, burn_addr_2.address);
     }
 
@@ -355,11 +357,11 @@ mod tests {
         let burn_addr = wallet.derive_burn_addr(0).unwrap();
 
         // Check that the address is properly formatted (20 bytes)
-        let address_bytes = burn_addr.address.as_bytes();
+        let address_bytes = burn_addr.address.as_slice();
         assert_eq!(address_bytes.len(), 20);
 
         // Address should not be all zeros
-        assert_ne!(burn_addr.address, Address::zero());
+        assert_ne!(burn_addr.address, Address::ZERO);
     }
 
     #[test]
@@ -403,7 +405,7 @@ mod tests {
         let coin = wallet.derive_coin(Fr::from(1000000000000000000u64), true);
         println!("Coin: {:?}", coin);
         assert!(coin.amount == U256::from(1000000000000000000u64));
-        assert!(coin.salt != U256::zero());
+        assert!(coin.salt != U256::ZERO);
         assert!(coin.encrypted == true);
     }
 }
