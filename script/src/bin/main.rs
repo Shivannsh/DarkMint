@@ -9,6 +9,9 @@
 //! ```shell
 //! RUST_LOG=info cargo run --release -- --prove
 //! ```
+mod mint;
+mod burn;
+use mint::{mint_cmd, BurnAddress, Coin, MintContext};
 
 use alloy_sol_types::SolType;
 use clap::Parser;
@@ -17,12 +20,11 @@ use alloy::{
     rpc::types::{Block, EIP1186AccountProofResponse},
 };
 use fibonacci_lib::{
-    burn,
-    mint::{mint_cmd, BurnAddress, Coin, MintContext},
     PublicValuesStruct,
 };
 use rlp::RlpStream;
 use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
+
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 pub const FIBONACCI_ELF: &[u8] = include_elf!("fibonacci-program");
@@ -73,6 +75,7 @@ fn calculate_lower_layer_prefix(proof: &EIP1186AccountProofResponse) -> (u32, Ve
     (prefix_len as u32, lower_layer_prefix)
 }
 
+#[tokio::main]
 async fn main() {
     // Setup the logger.
     sp1_sdk::utils::setup_logger();
@@ -86,12 +89,7 @@ async fn main() {
         std::process::exit(1);
     }
 
-    let context = MintContext::new(
-        args.src_burn_addr,
-        args.dst_addr,
-        args.encrypted,
-        args.priv_src,
-    );
+    let context = MintContext { src_burn_addr: Address::new(args.src_burn_addr.into()), dst_addr: Address::new(args.dst_addr.to_be_bytes()), encrypted: args.encrypted, priv_fee_payer: LocalSigner::from_str(&args.priv_src).unwrap(), ..Default::default() };
 
     let (burn_addr, block, proof, coin, prefix, state_root, postfix): (
         BurnAddress,
@@ -102,6 +100,7 @@ async fn main() {
         B256,
         Bytes,
     ) = mint_cmd(&args.provider_url, context).await?;
+
 
     // Calculate lower layer prefix from the MPT proof
     let (lower_layer_prefix_len, lower_layer_prefix) = calculate_lower_layer_prefix(&proof);

@@ -2182,11 +2182,15 @@ dependencies = [
  "dotenv",
  "fibonacci-lib",
  "hex",
+ "light-poseidon",
+ "rand 0.8.5",
  "rlp",
  "serde",
  "serde_json",
+ "sha2",
  "sp1-build",
  "sp1-sdk",
+ "tokio",
  "tracing",
 ]
 

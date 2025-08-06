@@ -1,5 +1,5 @@
-use crate::mint::Wallet;
-
+mod mint;
+use mint::Wallet;
 use alloy::{
     providers::{Provider, ProviderBuilder}, 
     rpc::types::TransactionRequest, 
@@ -122,4 +122,8 @@ mod tests {
         assert_eq!(context.amount, amount);
         assert_eq!(context.priv_src, priv_src);
     }
+}
+
+fn main() {
+    println!("Hello, world!");
 }

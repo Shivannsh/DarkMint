@@ -203,6 +203,8 @@ fn get_block_splited_information(
 
     Ok((prefix, commit_top, postfix))
 }
+
+#[tokio::main]
 pub async fn mint_cmd(
     provider_url: &str,
     context: MintContext,
@@ -408,4 +410,8 @@ mod tests {
         assert!(coin.salt != U256::ZERO);
         assert!(coin.encrypted == true);
     }
+}
+
+fn main() {
+    println!("Hello, world!");
 }

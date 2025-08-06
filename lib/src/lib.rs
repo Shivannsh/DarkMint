@@ -1,7 +1,5 @@
 use alloy_sol_types::sol;
 pub mod note;
-pub mod mint;
-pub mod burn;
 pub mod mpt_last;
 pub mod mpt_path;
 

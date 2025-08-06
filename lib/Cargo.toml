@@ -3,9 +3,6 @@ name = "fibonacci-lib"
 version = "0.1.0"
 edition = "2021"
 
-[[bin]]
-name = "burn"
-path = "src/main.rs"
 
 [dependencies]
 alloy="1.0.1"
