@@ -1,7 +1,6 @@
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use ethers::{
-    core::{k256::elliptic_curve::rand_core::block, types::TransactionRequest},
     prelude::*,
     providers::{Http, Provider},
 };
@@ -10,7 +9,7 @@ use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs, io::Write};
-use rlp::{RlpStream, Rlp};
+use rlp::RlpStream;
 
 const NOTE_SIZE: usize = 32;
 
@@ -196,7 +195,7 @@ fn get_block_splited_information(
     let header_rlp = stream.out();
     
     // Verify the header hash matches
-    let computed_hash = keccak256(&header_rlp);
+    let computed_hash = ethers::utils::keccak256(&header_rlp);
     let block_hash = block.hash.unwrap_or_default();
     
     if computed_hash != block_hash.as_bytes() {
@@ -247,12 +246,11 @@ pub async fn mint_cmd(
     let coin = wallet.derive_coin(amount_fr, context.encrypted);
     let zero_fr = Fr::from(0u64);
     let nullifier = poseidon_hash(burn_addr.preimage, zero_fr);
-    let layers = Vec::new();
     let block = client
         .get_block(block_number)
         .await?
         .ok_or("Block not found")?;
-    let proof = client.get_proof(burn_addr.address, vec![], Some(block_number)).await?;
+    let proof = client.get_proof(burn_addr.address, vec![], Some(block_number.into())).await?;
 
     let (prefix, state_root, postfix) = get_block_splited_information(&block)?;
     // let (layers, root_proof, mid_proofs, last_proof) =

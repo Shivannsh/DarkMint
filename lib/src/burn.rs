@@ -1,31 +1,11 @@
-use crate::mint::{Coin, Wallet};
-use clap::Parser;
+use crate::mint::Wallet;
 use ethers::{
-    core::types::TransactionRequest,
     prelude::*,
     providers::{Http, Provider},
-    types::{Address, U256},
+    types::{U256},
 };
 use std::io::{self, Write};
 use std::str::FromStr;
-
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct BurnArgs {
-    #[arg(long, default_value = "20")]
-    amount: f64,
-
-    #[arg(long)]
-    priv_src: String,
-}
-
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = BurnArgs::parse();
-    let context = BurnContext::new(args.amount, args.priv_src);
-    let provider = Provider::<Http>::try_from(provider_url)?;
-    burn_cmd(provider_url, context).await?;
-    Ok(())
-}
 
 pub struct BurnContext {
     amount: f64,
@@ -76,7 +56,7 @@ pub async fn burn_cmd(
         let account = LocalWallet::from_str(&context.priv_src)?;
 
         // Get gas price
-        let gas_price = provider.get_gas_price().await?;
+        let _gas_price = provider.get_gas_price().await?;
 
         // Get nonce
         let nonce = provider
