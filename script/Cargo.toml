@@ -16,6 +16,10 @@ path = "src/bin/evm.rs"
 name = "vkey"
 path = "src/bin/vkey.rs"
 
+[[bin]]
+name = "burn"
+path = "src/bin/burn.rs"
+
 [dependencies]
 sp1-sdk = "5.0.8"
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }

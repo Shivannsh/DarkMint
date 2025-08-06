@@ -12,13 +12,17 @@
 
 use alloy_sol_types::SolType;
 use clap::Parser;
-use fibonacci_lib::{ mint::{Coin, BurnAddress, MintContext, mint_cmd}, burn, PublicValuesStruct};
-use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
 use ethers::{
-    core::types::{Address, Block, TxHash,Bytes,H256},
+    core::types::{Address, Block, Bytes, TxHash, H256},
     types::EIP1186ProofResponse,
 };
+use fibonacci_lib::{
+    burn,
+    mint::{mint_cmd, BurnAddress, Coin, MintContext},
+    PublicValuesStruct,
+};
 use rlp::RlpStream;
+use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 pub const FIBONACCI_ELF: &[u8] = include_elf!("fibonacci-program");
@@ -35,7 +39,7 @@ struct Args {
 
     #[arg(long, default_value = "20")]
     encrypted: bool,
-    
+
     #[arg(long)]
     priv_src: String,
 
@@ -58,14 +62,14 @@ fn calculate_lower_layer_prefix(proof: &EIP1186ProofResponse) -> (u32, Vec<u8>) 
     stream.append(&proof.storage_hash.as_slice());
     stream.append(&proof.code_hash.as_slice());
     let account_rlp = stream.out();
-    
+
     // Get the last proof element (the account proof)
     let account_proof = proof.account_proof.last().unwrap();
-    
+
     // Calculate the prefix by removing the account RLP from the end
     let prefix_len = account_proof.len() - account_rlp.len();
     let lower_layer_prefix = account_proof[..prefix_len].to_vec();
-    
+
     (prefix_len as u32, lower_layer_prefix)
 }
 
@@ -82,9 +86,22 @@ async fn main() {
         std::process::exit(1);
     }
 
-    let context = MintContext::new(args.src_burn_addr, args.dst_addr, args.encrypted, args.priv_src);
+    let context = MintContext::new(
+        args.src_burn_addr,
+        args.dst_addr,
+        args.encrypted,
+        args.priv_src,
+    );
 
-    let (burn_addr, block, proof, coin, prefix, state_root, postfix): (BurnAddress, Block<TxHash>, EIP1186ProofResponse, Coin, Bytes, H256, Bytes) = mint_cmd(&args.provider_url, context).await?;
+    let (burn_addr, block, proof, coin, prefix, state_root, postfix): (
+        BurnAddress,
+        Block<TxHash>,
+        EIP1186ProofResponse,
+        Coin,
+        Bytes,
+        H256,
+        Bytes,
+    ) = mint_cmd(&args.provider_url, context).await?;
 
     // Calculate lower layer prefix from the MPT proof
     let (lower_layer_prefix_len, lower_layer_prefix) = calculate_lower_layer_prefix(&proof);
@@ -94,6 +111,14 @@ async fn main() {
 
     // Setup the inputs.
     let mut stdin = SP1Stdin::new();
+
+    println!("burn_addr.preimage: {:?}", burn_addr.preimage);
+    println!("lower_layer_prefix_len: {}", lower_layer_prefix_len);
+    println!("lower_layer_prefix: {:?}", lower_layer_prefix);
+    println!("proof.nonce: {:?}", proof.nonce);
+    println!("proof.balance: {:?}", proof.balance);
+    println!("proof.storage_hash: {:?}", proof.storage_hash);
+    println!("proof.code_hash: {:?}", proof.code_hash);
 
     stdin.write(&burn_addr.preimage);
     stdin.write(&lower_layer_prefix_len);
@@ -114,7 +139,13 @@ async fn main() {
 
         // Read the output.
         let decoded = PublicValuesStruct::abi_decode(output.as_slice()).unwrap();
-        let PublicValuesStruct { burn_preimage, commit_upper, encrypted_balance, nullifier, encrypted } = decoded;
+        let PublicValuesStruct {
+            burn_preimage,
+            commit_upper,
+            encrypted_balance,
+            nullifier,
+            encrypted,
+        } = decoded;
         println!("burn_preimage: {}", burn_preimage);
         println!("commit_upper: {}", commit_upper);
         println!("encrypted_balance: {}", encrypted_balance);
