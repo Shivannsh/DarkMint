@@ -9,11 +9,8 @@
 //! ```shell
 //! RUST_LOG=info cargo run --release -- --prove
 //! ```
-mod burn;
-mod mint;
 use ark_ff::{BigInteger, PrimeField};
-use burn::burn_cmd;
-use mint::{mint_cmd, BurnAddress, Coin, MintContext};
+use fibonacci_script::{burn_cmd, mint_cmd, BurnAddress, Coin, MintContext};
 
 use alloy::{
     primitives::{Bytes, B256},
@@ -24,14 +21,13 @@ use tiny_keccak::{Hasher, Keccak};
 use clap::Parser;
 
 use rlp::RlpStream;
-use sp1_sdk::{include_elf, ProverClient, SP1Stdin, HashableKey};
+use sp1_sdk::{include_elf, HashableKey, ProverClient, SP1Stdin};
 
 use rustls::crypto::ring::default_provider;
 use rustls::crypto::CryptoProvider;
+use serde::{Deserialize, Serialize};
 use sp1_zkv_sdk::*; // for the `convert_to_zkv` and `hash_bytes` methods.
 use std::{fs::File, io::Write};
-use serde::{Deserialize, Serialize};
-
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 pub const FIBONACCI_ELF: &[u8] = include_elf!("fibonacci-program");
@@ -67,20 +63,17 @@ struct Args {
 
 // Struct of the output we need
 #[derive(Serialize, Deserialize)]
-struct Output{
+struct Output {
     image_id: String,
     pub_inputs: String,
-    proof: String
+    proof: String,
 }
 
 // Helper function to get hex strings
 fn to_hex_with_prefix(bytes: &[u8]) -> String {
-    let hex_string: String = bytes.iter()
-        .map(|b| format!("{:02x}", b))
-        .collect();
+    let hex_string: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
     format!("0x{}", hex_string)
 }
-
 
 pub fn keccak256<T: AsRef<[u8]>>(input: T) -> B256 {
     let mut hasher = Keccak::v256();
@@ -251,7 +244,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .expect("failed to serialize proof");
 
         // Convert to required struct
-        let output = Output{
+        let output = Output {
             proof: to_hex_with_prefix(&serialized_proof),
             image_id: to_hex_with_prefix(&vk_hash),
             pub_inputs: to_hex_with_prefix(&public_values),

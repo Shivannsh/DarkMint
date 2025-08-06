@@ -13,16 +13,8 @@ name = "fibonacci"
 path = "src/bin/main.rs"
 
 [[bin]]
-name = "evm"
-path = "src/bin/evm.rs"
-
-[[bin]]
 name = "vkey"
 path = "src/bin/vkey.rs"
-
-[[bin]]
-name = "mint"
-path = "src/bin/mint.rs"
 
 
 

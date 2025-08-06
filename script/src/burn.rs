@@ -1,11 +1,10 @@
-#![no_main]
 use alloy::{
     primitives::U256,
     providers::{Provider, ProviderBuilder},
     rpc::types::TransactionRequest,
     signers::local::PrivateKeySigner,
 };
-use fibonacci_script::Wallet;
+use crate::Wallet;
 use std::io::{self, Write};
 
 pub async fn burn_cmd(amount: f64, priv_src: String) -> Result<(), Box<dyn std::error::Error>> {
@@ -20,7 +19,7 @@ pub async fn burn_cmd(amount: f64, priv_src: String) -> Result<(), Box<dyn std::
     // Find a burn address with zero balance
     let mut burn_addr = None;
     for i in 0..10 {
-        let burn_address = wallet.derive_burn_addr(i)?;
+        let burn_address = wallet.derive_burn_address(i)?;
         let balance = provider.get_balance(burn_address.address).await?;
         if balance == U256::ZERO {
             burn_addr = Some(burn_address);
