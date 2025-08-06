@@ -71,14 +71,13 @@ struct Output {
 
 // Helper function to get hex strings
 fn to_hex_with_prefix(bytes: &[u8]) -> String {
-    let hex_string: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
-    format!("0x{}", hex_string)
+    let hex_string: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!("0x{hex_string}")
 }
 
 pub fn keccak256<T: AsRef<[u8]>>(input: T) -> B256 {
     let mut hasher = Keccak::v256();
     let mut output = [0u8; 32];
-
     hasher.update(input.as_ref());
     hasher.finalize(&mut output);
 
@@ -171,7 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             priv_fee_payer: priv_src.parse().unwrap(),
         };
 
-        println!("context: {:?}", context);
+        println!("context: {context:?}");
 
         let (burn_addr, block, proof, coin, _prefix, _state_root, _postfix): (
             BurnAddress,
@@ -193,15 +192,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut stdin = SP1Stdin::new();
 
         println!("burn_addr.preimage: {:?}", burn_addr.preimage);
-        println!("lower_layer_prefix_len: {:?}", lower_layer_prefix_len);
-        println!("lower_layer_prefix: {:?}", lower_layer_prefix);
+        println!("lower_layer_prefix_len: {lower_layer_prefix_len:?}");
+        println!("lower_layer_prefix: {lower_layer_prefix:?}");
         println!("proof.nonce: {:?}", proof.nonce);
         println!("proof.balance: {:?}", proof.balance);
         println!("proof.storage_hash: {:?}", proof.storage_hash);
         println!("proof.code_hash: {:?}", proof.code_hash);
 
         let preimage = burn_addr.preimage.into_bigint();
-        println!("preimage: {:?}", preimage);
+        println!("preimage: {preimage:?}");
 
         stdin.write(&preimage.to_bytes_be());
         stdin.write(&lower_layer_prefix_len);

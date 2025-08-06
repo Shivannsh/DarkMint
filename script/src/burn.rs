@@ -1,10 +1,10 @@
+use crate::Wallet;
 use alloy::{
     primitives::U256,
     providers::{Provider, ProviderBuilder},
     rpc::types::TransactionRequest,
     signers::local::PrivateKeySigner,
 };
-use crate::Wallet;
 use std::io::{self, Write};
 
 pub async fn burn_cmd(amount: f64, priv_src: String) -> Result<(), Box<dyn std::error::Error>> {
@@ -12,7 +12,7 @@ pub async fn burn_cmd(amount: f64, priv_src: String) -> Result<(), Box<dyn std::
 
     let provider = ProviderBuilder::new()
         .wallet(signer.clone())
-        .connect("https://eth-sepolia.g.alchemy.com/v2/4G8SnWtpGGbMLwoolbtiXu99TKMw6vMs")
+        .connect(&std::env::var("RPC_URL").expect("RPC_URL must be set"))
         .await?;
     let wallet = Wallet::open_or_create()?;
 
@@ -73,6 +73,3 @@ pub async fn burn_cmd(amount: f64, priv_src: String) -> Result<(), Box<dyn std::
 
     Ok(())
 }
-
-
-

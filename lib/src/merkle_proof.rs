@@ -140,7 +140,7 @@ fn verify_substring_constraint(
     let substring_found = contains_substring(keccak_lower, upper_layer_bytes);
 
     // Constraint: substring_found should equal !is_top
-    if substring_found == !is_top {
+    if substring_found != is_top {
         Ok(())
     } else {
         Err("Substring containment constraint violated")

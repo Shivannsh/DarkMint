@@ -76,17 +76,17 @@ fn get_block_splited_information(
     let number_bytes = if block.header.number == 0 {
         Vec::new()
     } else {
-        remove_leading_zeros(&block.header.number.to_be_bytes().to_vec())
+        remove_leading_zeros(&block.header.number.to_be_bytes())
     };
     stream.append(&number_bytes);
 
-    let gas_limit_bytes = remove_leading_zeros(&block.header.gas_limit.to_be_bytes().to_vec());
+    let gas_limit_bytes = remove_leading_zeros(&block.header.gas_limit.to_be_bytes());
     stream.append(&gas_limit_bytes);
 
-    let gas_used_bytes = remove_leading_zeros(&block.header.gas_used.to_be_bytes().to_vec());
+    let gas_used_bytes = remove_leading_zeros(&block.header.gas_used.to_be_bytes());
     stream.append(&gas_used_bytes);
 
-    let timestamp_bytes = remove_leading_zeros(&block.header.timestamp.to_be_bytes().to_vec());
+    let timestamp_bytes = remove_leading_zeros(&block.header.timestamp.to_be_bytes());
     stream.append(&timestamp_bytes);
 
     stream.append(&block.header.extra_data.to_vec());
@@ -98,7 +98,7 @@ fn get_block_splited_information(
         let base_fee_bytes = if base_fee == 0 {
             Vec::new()
         } else {
-            remove_leading_zeros(&base_fee.to_be_bytes().to_vec())
+            remove_leading_zeros(&base_fee.to_be_bytes())
         };
         stream.append(&base_fee_bytes);
     }
@@ -111,7 +111,7 @@ fn get_block_splited_information(
         let blob_gas_used_bytes = if blob_gas_used == 0 {
             Vec::new()
         } else {
-            remove_leading_zeros(&blob_gas_used.to_be_bytes().to_vec())
+            remove_leading_zeros(&blob_gas_used.to_be_bytes())
         };
         stream.append(&blob_gas_used_bytes);
     }
@@ -120,7 +120,7 @@ fn get_block_splited_information(
         let excess_blob_gas_bytes = if excess_blob_gas == 0 {
             Vec::new()
         } else {
-            remove_leading_zeros(&excess_blob_gas.to_be_bytes().to_vec())
+            remove_leading_zeros(&excess_blob_gas.to_be_bytes())
         };
         stream.append(&excess_blob_gas_bytes);
     }

@@ -227,7 +227,7 @@ impl Wallet {
     fn compute_address_preimage(&self, entropy_bytes: &[u8], index: u64) -> Fr {
         let mut hasher = Sha256::new();
         hasher.update(entropy_bytes);
-        hasher.update(&index.to_le_bytes());
+        hasher.update(index.to_le_bytes());
         let result = hasher.finalize();
 
         // Take first 31 bytes to ensure we stay within field size

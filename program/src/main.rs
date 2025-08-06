@@ -19,7 +19,6 @@ use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use fibonacci_lib::PublicValuesStruct;
 use fibonacci_lib::{mpt_last_circuit, mpt_path_circuit, MptLastInputs, MptPathInputs};
-use hex;
 use tiny_keccak::{Hasher, Keccak};
 
 /// Check if a substring exists within a larger byte array
@@ -130,7 +129,7 @@ fn read_proof_inputs() -> ProofInputs {
 /// # Arguments
 /// * `inputs` - Input parameters to log
 fn log_input_parameters(inputs: &ProofInputs, burn_preimage_fr: Fr) {
-    println!("burn_preimage: {:?}", burn_preimage_fr);
+    println!("burn_preimage: {burn_preimage_fr}");
     println!("lower_layer_prefix_len: {}", inputs.lower_layer_prefix_len);
     println!("lower_layer_prefix: {:?}", inputs.lower_layer_prefix);
     println!("nonce: {}", inputs.nonce);
@@ -240,7 +239,7 @@ fn verify_intermediate_layer(level: &[u8], next_level: &[u8], index: usize) {
     let level_hash = compute_keccak256(level);
 
     if !contains_substring(level_hash.as_slice(), next_level) {
-        panic!("MPT path verification failed at level {}!", index);
+        panic!("MPT path verification failed at level {index}!");
     }
 }
 
@@ -270,41 +269,42 @@ fn generate_path_proof(level: &[u8], next_level: &[u8], salt_fr: Fr) -> (u32, u3
     (path_proof, layer_commitment)
 }
 
+/// Proof output data for commitment
+#[derive(Debug)]
+struct ProofOutputData {
+    burn_preimage: Vec<u8>,
+    commit_upper: u32,
+    encrypted_balance: u32,
+    nullifier: u32,
+    encrypted: bool,
+    path_proofs: Vec<u32>,
+    layers: Vec<u32>,
+    root_proof: Option<u32>,
+}
+
 /// Generate and commit the final proof outputs
 ///
 /// This function encodes the public values and proof data, then commits them
 /// to the zkVM output stream for verification by external parties.
 ///
 /// # Arguments
-/// * `burn_preimage` - Original burn preimage bytes
-/// * `commit_upper` - Upper layer commitment
-/// * `encrypted_balance` - Processed balance value
-/// * `nullifier` - Unique nullifier for double-spend prevention
-/// * `encrypted` - Whether balance is encrypted
-/// * `path_proofs` - Path proof commitments for intermediate layers
-/// * `layers` - Layer commitments
-/// * `root_proof` - Optional root proof commitment
-fn commit_proof_outputs(
-    burn_preimage: &[u8],
-    commit_upper: u32,
-    encrypted_balance: u32,
-    nullifier: u32,
-    encrypted: bool,
-    path_proofs: &[u32],
-    layers: &[u32],
-    root_proof: Option<u32>,
-) {
+/// * `output_data` - All proof output data to commit
+fn commit_proof_outputs(output_data: ProofOutputData) {
     // Encode the main public values
     let public_values = PublicValuesStruct::abi_encode(&PublicValuesStruct {
-        burn_preimage: burn_preimage.to_vec().into(),
-        commit_upper,
-        encrypted_balance,
-        nullifier,
-        encrypted,
+        burn_preimage: output_data.burn_preimage.into(),
+        commit_upper: output_data.commit_upper,
+        encrypted_balance: output_data.encrypted_balance,
+        nullifier: output_data.nullifier,
+        encrypted: output_data.encrypted,
     });
 
     // Encode the MPT path proof data
-    let proof_data = encode_proof_data(path_proofs, layers, root_proof);
+    let proof_data = encode_proof_data(
+        &output_data.path_proofs,
+        &output_data.layers,
+        output_data.root_proof,
+    );
 
     // Commit both sets of data to the zkVM output
     sp1_zkvm::io::commit_slice(&public_values);
@@ -379,14 +379,15 @@ pub fn main() {
         process_mpt_path_proofs(inputs.account_proof, inputs.state_root, salt_fr);
 
     // Step 7: Generate and commit public values and proof data
-    commit_proof_outputs(
-        &inputs.burn_preimage,
-        commit_upper_u32,
-        encrypted_balance_u32,
-        nullifier_u32,
-        inputs.encrypted,
-        &path_proofs,
-        &layers,
+    let output_data = ProofOutputData {
+        burn_preimage: inputs.burn_preimage.clone(),
+        commit_upper: commit_upper_u32,
+        encrypted_balance: encrypted_balance_u32,
+        nullifier: nullifier_u32,
+        encrypted: inputs.encrypted,
+        path_proofs,
+        layers,
         root_proof,
-    );
+    };
+    commit_proof_outputs(output_data);
 }
