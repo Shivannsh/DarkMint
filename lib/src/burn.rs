@@ -6,6 +6,19 @@ use ethers::{
 };
 use std::io::{self, Write};
 use std::str::FromStr;
+use clap::Parser;
+
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(long)]
+    amount: f64,
+    #[arg(long)]
+    priv_src: String,
+    #[arg(long, default_value = "http://127.0.0.1:8545")]
+    provider_url: String,
+}
 
 pub struct BurnContext {
     amount: f64,
@@ -19,10 +32,11 @@ impl BurnContext {
 }
 
 pub async fn burn_cmd(
-    provider_url: &str,
-    context: BurnContext,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let provider = Provider::<Http>::try_from(provider_url)?;
+
+    let args = Args::parse();
+    let context = BurnContext::new(args.amount, args.priv_src);
+    let provider = Provider::<Http>::try_from(args.provider_url)?;
     let wallet = Wallet::open_or_create()?;
 
     // Find a burn address with zero balance
@@ -53,7 +67,8 @@ pub async fn burn_cmd(
         let amount_wei = U256::from((context.amount * 1e18) as u64);
 
         // Create account from private key
-        let account = LocalWallet::from_str(&context.priv_src)?;
+        let mut account = LocalWallet::from_str(&context.priv_src)?;
+        account = account.with_chain_id(11155111u64); // Set Sepolia chain ID
 
         // Get gas price
         let _gas_price = provider.get_gas_price().await?;
