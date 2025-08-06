@@ -13,7 +13,7 @@ use alloy_sol_types::SolType;
 use fibonacci_lib::{PublicValuesStruct, MptLastInputs, MptLastOutputs, mpt_last_circuit, MptPathInputs, MptPathOutputs, mpt_path_circuit};
 use ark_bn254::Fr;
 use ark_ff::{PrimeField, BigInteger};
-use sha2::Digest;
+use sha2::{digest::consts::U256, Digest};
 
 /// Keccak-256 hash function (using SHA-256 as approximation)
 fn keccak256(data: &[u8]) -> [u8; 32] {
@@ -56,6 +56,14 @@ pub fn main() {
     // Convert inputs to the appropriate types for the circuit
     let burn_preimage_fr = Fr::from(burn_preimage);
     let salt_fr = Fr::from(salt);
+
+    println!("burn_preimage: {:?}", burn_preimage_fr);
+    println!("lower_layer_prefix_len: {}", lower_layer_prefix_len);
+    println!("lower_layer_prefix: {:?}", lower_layer_prefix);
+    println!("nonce: {}", nonce);
+    println!("balance: {}", balance);
+    println!("storage_hash: {:?}", storage_hash);
+    println!("code_hash: {:?}", code_hash);
 
     // Create the circuit inputs
     let inputs = MptLastInputs {

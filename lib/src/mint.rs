@@ -6,10 +6,10 @@ use ethers::{
 };
 use light_poseidon::{Poseidon, PoseidonBytesHasher};
 use rand::{rngs::OsRng, RngCore};
+use rlp::RlpStream;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs, io::Write};
-use rlp::RlpStream;
 
 const NOTE_SIZE: usize = 32;
 
@@ -33,7 +33,7 @@ pub struct MintContext {
     pub priv_fee_payer: LocalWallet,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize,Clone)]
 pub struct Coin {
     pub amount: U256,
     pub salt: U256,
@@ -114,8 +114,10 @@ impl Wallet {
             encrypted,
         }
     }
-    fn add_coin(&mut self, coin: Coin) {
+    fn add_coin(&mut self, coin: Coin)-> Result<(), Box<dyn std::error::Error>> {
         self.coins.push(coin);
+        self.save()?;
+        Ok(())
     }
     fn remove_coin(&mut self, index: usize) {
         self.coins.remove(index);
@@ -127,31 +129,13 @@ impl Wallet {
     }
 }
 
-// This is a placeholder for the complex proof generation logic.
-// In a real scenario, this would involve serializing inputs to JSON,
-// running external `make` commands, and parsing the resulting proof files.
-fn get_proof_of_burn(
-    _burn_addr: &BurnAddress,
-    _salt: U256,
-    _encrypted: bool,
-    _block: &Block<TxHash>,
-    _proof: &EIP1186ProofResponse,
-) -> Result<(Vec<U256>, Vec<U256>, Vec<Vec<U256>>, Vec<U256>), Box<dyn std::error::Error>> {
-    // This function would orchestrate the calls to `mpt_path.py` and `mpt_last.py`
-    // by executing shell commands, similar to the python script.
-    // For now, it returns dummy data.
-    println!("Warning: Proof generation is mocked.");
-    Ok((vec![], vec![], vec![], vec![]))
-}
-
 // Placeholder for block splitting logic
 fn get_block_splited_information(
     block: &Block<TxHash>,
 ) -> Result<(Bytes, H256, Bytes), Box<dyn std::error::Error>> {
-   
     // Create RLP stream for block header
     let mut stream = RlpStream::new_list(15); // Base header fields
-    
+
     // Add required header fields
     stream.append(&block.parent_hash.as_bytes());
     stream.append(&block.uncles_hash.as_bytes());
@@ -168,12 +152,12 @@ fn get_block_splited_information(
     stream.append(&block.extra_data.to_vec());
     stream.append(&block.mix_hash.unwrap_or_default().as_bytes());
     stream.append(&block.nonce.unwrap_or_default().as_bytes());
-    
+
     // Add optional EIP-1559 fields if present
     if let Some(base_fee) = block.base_fee_per_gas {
         stream.append(&base_fee);
     }
-    
+
     // Add optional EIP-4844 fields if present
     if let Some(blob_gas_used) = block.blob_gas_used {
         stream.append(&blob_gas_used);
@@ -181,46 +165,58 @@ fn get_block_splited_information(
     if let Some(excess_blob_gas) = block.excess_blob_gas {
         stream.append(&excess_blob_gas);
     }
-    
+
     // Add optional withdrawals root if present
     if let Some(withdrawals_root) = block.withdrawals_root {
         stream.append(&withdrawals_root.as_bytes());
     }
-    
+
     // Add optional parent beacon block root if present
     if let Some(parent_beacon_block_root) = block.parent_beacon_block_root {
         stream.append(&parent_beacon_block_root.as_bytes());
     }
-    
+
     let header_rlp = stream.out();
-    
+
     // Verify the header hash matches
     let computed_hash = ethers::utils::keccak256(&header_rlp);
     let block_hash = block.hash.unwrap_or_default();
-    
+
     if computed_hash != block_hash.as_bytes() {
         return Err("Block header hash verification failed".into());
     }
-    
+
     // Find state root position in RLP
     let state_root_bytes = block.state_root.as_bytes();
-    let state_root_start = header_rlp.windows(state_root_bytes.len())
+    let state_root_start = header_rlp
+        .windows(state_root_bytes.len())
         .position(|window| window == state_root_bytes)
         .ok_or("State root not found in header")?;
-    
+
     let state_root_end = state_root_start + state_root_bytes.len();
-    
+
     // Split the header
     let prefix = Bytes::from(header_rlp[..state_root_start].to_vec());
     let commit_top = block.state_root;
     let postfix = Bytes::from(header_rlp[state_root_end..].to_vec());
-    
+
     Ok((prefix, commit_top, postfix))
 }
 pub async fn mint_cmd(
     provider_url: &str,
     context: MintContext,
-) -> Result<(BurnAddress, Block<TxHash>, EIP1186ProofResponse,Coin, Bytes, H256, Bytes), Box<dyn std::error::Error>> {
+) -> Result<
+    (
+        BurnAddress,
+        Block<TxHash>,
+        EIP1186ProofResponse,
+        Coin,
+        Bytes,
+        H256,
+        Bytes,
+    ),
+    Box<dyn std::error::Error>,
+> {
     let provider = Provider::<Http>::try_from(provider_url)?;
     let client = SignerMiddleware::new(provider, context.priv_fee_payer.clone());
 
@@ -244,44 +240,20 @@ pub async fn mint_cmd(
     amount.to_big_endian(&mut amount_bytes);
     let amount_fr = Fr::from_le_bytes_mod_order(&amount_bytes);
     let coin = wallet.derive_coin(amount_fr, context.encrypted);
+    wallet.add_coin(coin.clone())?;
     let zero_fr = Fr::from(0u64);
     let nullifier = poseidon_hash(burn_addr.preimage, zero_fr);
     let block = client
         .get_block(block_number)
         .await?
         .ok_or("Block not found")?;
-    let proof = client.get_proof(burn_addr.address, vec![], Some(block_number.into())).await?;
+    let proof = client
+        .get_proof(burn_addr.address, vec![], Some(block_number.into()))
+        .await?;
 
     let (prefix, state_root, postfix) = get_block_splited_information(&block)?;
-    // let (layers, root_proof, mid_proofs, last_proof) =
-    //     get_proof_of_burn(&burn_addr, coin.salt, context.encrypted, &block, &proof)?;
 
-    // // This part is highly dependent on the exact ABI and contract deployment.
-    // // The following is a conceptual translation.
-    // println!("Contract interaction logic is conceptual and needs a proper ABI and contract setup.");
-
-    // // Dummy transaction
-    // let tx = TransactionRequest::new().to(context.dst_addr).value(0);
-
-    // println!("Transaction prepared (mock): {:?}", tx);
-    // // let pending_tx = client.send_transaction(tx, None).await?;
-    // // let _receipt = pending_tx.await?;
-    // println!("Transaction would be sent here.");
-
-    // if context.encrypted {
-    //     wallet.coins.push(coin);
-    // }
-    // wallet.save()?;
-
-    Ok((
-        burn_addr,
-        block,
-        proof,
-        coin,
-        prefix,
-        state_root,
-        postfix,
-    ))
+    Ok((burn_addr, block, proof, coin, prefix, state_root, postfix))
 }
 
 #[cfg(test)]
