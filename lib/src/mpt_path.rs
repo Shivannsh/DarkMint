@@ -1,3 +1,4 @@
+#![no_main]
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use light_poseidon::{Poseidon, PoseidonBytesHasher};

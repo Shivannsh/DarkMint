@@ -25,7 +25,7 @@ name = "burn"
 path = "src/bin/burn.rs"
 
 [dependencies]
-sp1-sdk = { version = "5.0.8", default-features = false }
+sp1-sdk = { version = "5.0.8", features = ["network"]}
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde = { version = "1.0.200", default-features = false, features = ["derive"] }
 clap = { version = "4.0", features = ["derive", "env"] }
@@ -41,7 +41,9 @@ alloy="1.0.1"
 light-poseidon = "0.3.0"
 rand = "0.8"
 sha2 = "0.10.9"
-tokio = { workspace = true }
+tokio = { version = "1.0", features = ["full"] }
+rustls = { version = "0.23", features = ["ring"] }
+
 
 [build-dependencies]
 sp1-build = "5.0.8"

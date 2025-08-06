@@ -9,21 +9,24 @@
 //! ```shell
 //! RUST_LOG=info cargo run --release -- --prove
 //! ```
-mod mint;
 mod burn;
+mod mint;
+use ark_ff::{BigInteger, PrimeField};
+use burn::burn_cmd;
 use mint::{mint_cmd, BurnAddress, Coin, MintContext};
 
-use alloy_sol_types::SolType;
-use clap::Parser;
 use alloy::{
     primitives::{Address, Bytes, B256},
     rpc::types::{Block, EIP1186AccountProofResponse},
 };
-use fibonacci_lib::{
-    PublicValuesStruct,
-};
+use alloy_sol_types::SolType;
+use clap::Parser;
+use fibonacci_lib::PublicValuesStruct;
 use rlp::RlpStream;
 use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
+use std::str::FromStr;
+use rustls::crypto::ring::default_provider;
+use rustls::crypto::CryptoProvider;
 
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
@@ -34,22 +37,25 @@ pub const FIBONACCI_ELF: &[u8] = include_elf!("fibonacci-program");
 #[command(author, version, about, long_about = None)]
 struct Args {
     #[arg(long)]
-    execute: bool,
+    burn: bool,
 
     #[arg(long)]
     prove: bool,
 
-    #[arg(long, default_value = "20")]
+    #[arg(long)]
+    amount: Option<f64>,
+
+    #[arg(long)]
+    priv_src: Option<String>,
+
+    #[arg(long, default_value = "false")]
     encrypted: bool,
 
     #[arg(long)]
-    priv_src: String,
+    dst_addr: Option<String>,
 
     #[arg(long)]
-    dst_addr: String,
-
-    #[arg(long)]
-    src_burn_addr: String,
+    src_burn_addr: Option<String>,
 
     #[arg(long, default_value = "http://127.0.0.1:8545")]
     provider_url: String,
@@ -60,7 +66,7 @@ fn calculate_lower_layer_prefix(proof: &EIP1186AccountProofResponse) -> (u32, Ve
     // RLP encode the account data
     let mut stream = RlpStream::new_list(4);
     stream.append(&proof.nonce);
-    stream.append(&proof.balance);
+    stream.append(&proof.balance.to_be_bytes_vec());
     stream.append(&proof.storage_hash.as_slice());
     stream.append(&proof.code_hash.as_slice());
     let account_rlp = stream.out();
@@ -74,9 +80,11 @@ fn calculate_lower_layer_prefix(proof: &EIP1186AccountProofResponse) -> (u32, Ve
 
     (prefix_len as u32, lower_layer_prefix)
 }
-
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize rustls crypto provider
+    CryptoProvider::install_default(default_provider()).expect("Failed to install crypto provider");
+   
     // Setup the logger.
     sp1_sdk::utils::setup_logger();
     dotenv::dotenv().ok();
@@ -84,89 +92,91 @@ async fn main() {
     // Parse the command line arguments.
     let args = Args::parse();
 
-    if args.execute == args.prove {
-        eprintln!("Error: You must specify either --execute or --prove");
-        std::process::exit(1);
-    }
+    if args.burn {
+        let amount = args.amount.expect("--amount is required when using --burn");
+        let priv_src = args
+            .priv_src
+            .expect("--priv-src is required when using --burn");
+        burn_cmd(amount, priv_src).await?;
+    } else if args.prove {
+        let dst_addr = args
+            .dst_addr
+            .expect("--dst-addr is required when not using --burn");
+        let src_burn_addr = args
+            .src_burn_addr
+            .expect("--src-burn-addr is required when not using --burn");
+        let priv_src = args
+            .priv_src
+            .expect("--priv-src is required when not using --burn");
 
-    let context = MintContext { src_burn_addr: Address::new(args.src_burn_addr.into()), dst_addr: Address::new(args.dst_addr.to_be_bytes()), encrypted: args.encrypted, priv_fee_payer: LocalSigner::from_str(&args.priv_src).unwrap(), ..Default::default() };
+        let context = MintContext {
+            src_burn_addr: src_burn_addr.parse().unwrap(),
+            dst_addr: dst_addr.parse().unwrap(),
+            encrypted: args.encrypted,
+            priv_fee_payer: priv_src.parse().unwrap(),
+        };
 
-    let (burn_addr, block, proof, coin, prefix, state_root, postfix): (
-        BurnAddress,
-        Block,
-        EIP1186AccountProofResponse,
-        Coin,
-        Bytes,
-        B256,
-        Bytes,
-    ) = mint_cmd(&args.provider_url, context).await?;
+        println!("context: {:?}", context);
 
+        let (burn_addr, block, proof, coin, _prefix, _state_root, _postfix): (
+            BurnAddress,
+            Block,
+            EIP1186AccountProofResponse,
+            Coin,
+            Bytes,
+            B256,
+            Bytes,
+        ) = mint_cmd(&args.provider_url, context).await?;
 
-    // Calculate lower layer prefix from the MPT proof
-    let (lower_layer_prefix_len, lower_layer_prefix) = calculate_lower_layer_prefix(&proof);
+        // Calculate lower layer prefix from the MPT proof
+        let (lower_layer_prefix_len, lower_layer_prefix) = calculate_lower_layer_prefix(&proof);
 
-    // Setup the prover client.
-    let client = ProverClient::from_env();
+        // Setup the prover client.
+        let client = ProverClient::from_env();
 
-    // Setup the inputs.
-    let mut stdin = SP1Stdin::new();
+        // Setup the inputs.
+        let mut stdin = SP1Stdin::new();
 
-    println!("burn_addr.preimage: {:?}", burn_addr.preimage);
-    println!("lower_layer_prefix_len: {}", lower_layer_prefix_len);
-    println!("lower_layer_prefix: {:?}", lower_layer_prefix);
-    println!("proof.nonce: {:?}", proof.nonce);
-    println!("proof.balance: {:?}", proof.balance);
-    println!("proof.storage_hash: {:?}", proof.storage_hash);
-    println!("proof.code_hash: {:?}", proof.code_hash);
+        println!("burn_addr.preimage: {:?}", burn_addr.preimage);
+        println!("lower_layer_prefix_len: {:?}", lower_layer_prefix_len);
+        println!("lower_layer_prefix: {:?}", lower_layer_prefix);
+        println!("proof.nonce: {:?}", proof.nonce);
+        println!("proof.balance: {:?}", proof.balance);
+        println!("proof.storage_hash: {:?}", proof.storage_hash);
+        println!("proof.code_hash: {:?}", proof.code_hash);
 
-    stdin.write(&burn_addr.preimage);
-    stdin.write(&lower_layer_prefix_len);
-    stdin.write(&lower_layer_prefix);
-    stdin.write(&proof.nonce);
-    stdin.write(&proof.balance);
-    stdin.write(&proof.storage_hash);
-    stdin.write(&proof.code_hash);
-    stdin.write(&proof.account_proof);
-    stdin.write(&block.header.state_root);
-    stdin.write(&coin.salt);
-    stdin.write(&coin.encrypted);
+        let preimage = burn_addr.preimage.into_bigint();
+        println!("preimage: {:?}", preimage);
 
-    if args.execute {
-        // Execute the program
-        let (output, report) = client.execute(FIBONACCI_ELF, &stdin).run().unwrap();
-        println!("Program executed successfully.");
+        stdin.write(&preimage.to_bytes_be());
+        stdin.write(&lower_layer_prefix_len);
+        stdin.write(&lower_layer_prefix);
+        stdin.write(&proof.nonce);
+        stdin.write(&proof.balance);
+        stdin.write(&proof.storage_hash);
+        stdin.write(&proof.code_hash);
+        stdin.write(&proof.account_proof);
+        stdin.write(&block.header.state_root);
+        stdin.write(&coin.salt);
+        stdin.write(&coin.encrypted);
 
-        // Read the output.
-        let decoded = PublicValuesStruct::abi_decode(output.as_slice()).unwrap();
-        let PublicValuesStruct {
-            burn_preimage,
-            commit_upper,
-            encrypted_balance,
-            nullifier,
-            encrypted,
-        } = decoded;
-        println!("burn_preimage: {}", burn_preimage);
-        println!("commit_upper: {}", commit_upper);
-        println!("encrypted_balance: {}", encrypted_balance);
-        println!("nullifier: {}", nullifier);
-        println!("encrypted: {}", encrypted);
+        println!("sent");
 
-        // Record the number of cycles executed.
-        println!("Number of cycles: {}", report.total_instruction_count());
-    } else {
         // Setup the program for proving.
         let (pk, vk) = client.setup(FIBONACCI_ELF);
+        println!("setup");
 
         // Generate the proof
         let proof = client
             .prove(&pk, &stdin)
+            .groth16()
             .run()
             .expect("failed to generate proof");
-
-        println!("Successfully generated proof!");
-
+        println!("proof");
+        
         // Verify the proof.
         client.verify(&proof, &vk).expect("failed to verify proof");
         println!("Successfully verified proof!");
     }
+    Ok(())
 }
