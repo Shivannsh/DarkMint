@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-alloy-sol-types = { workspace = true }
+alloy-sol-types = "1.0"
 rand = "0.8"
 hex = "0.4"
 light-poseidon = "0.3.0"
 ark-ff = "0.5.0"
 ark-bn254 = "0.5.0"
-serde = { version = "1.0.219" }
-ethers = { version = "2.0.14" }
+ethers = "2.0.14"
+serde = "1.0.219"
+sha2 = "0.10.9"
+serde_json = "1.0.141"
 

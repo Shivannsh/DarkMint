@@ -1,6 +1,8 @@
 use alloy_sol_types::sol;
 pub mod note;
 pub mod mint;
+pub mod burn;
+
 sol! {
     /// The public values encoded as a struct that can be easily deserialized inside Solidity.
     struct PublicValuesStruct {

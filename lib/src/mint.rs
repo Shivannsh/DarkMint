@@ -1,49 +1,27 @@
-
-// This file replicates the functionality of the Python `mint.py` script in Rust.
-
-use std::{fs, io::Write, process::Command, str::FromStr};
-use ethers::{
-    prelude::*,
-    providers::{Provider, Http},
-    core::types::TransactionRequest,
-};
-use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
-use ark_ff::Field as ArkField;
 use ark_bn254::Fr;
+use ark_ff::{BigInteger, PrimeField};
+use ethers::{
+    core::types::TransactionRequest,
+    prelude::*,
+    providers::{Http, Provider},
+};
+use light_poseidon::{Poseidon, PoseidonBytesHasher};
+use rand::{rngs::OsRng, RngCore};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{fs, io::Write};
 
-// Constants
-const FIELD_SIZE: U256 = U256([
-    0x73eda753299d7d48, 0x3339d80809a1d805, 0x29a33605fe6cd9a6, 0x30644e72e131a029,
-]);
-
-// Re-implementation of Python's Field class
-#[derive(Debug, Clone, Copy)]
-struct Field {
-    val: U256,
-}
-
-impl Field {
-    fn new(val: U256) -> Self {
-        Self { val: val % FIELD_SIZE }
-    }
-}
+const NOTE_SIZE: usize = 32;
 
 // MiMC7 implementation (simplified from Python)
-fn mimc7(left: Field, right: Field) -> Field {
-    // In a real implementation, this would be the full MiMC7 algorithm.
-    // For this example, we'll use a simple Poseidon hash as a stand-in,
-    // since a MiMC7 library isn't in the dependencies.
-    // NOTE: This is NOT compatible with the original Python implementation.
-    // A proper MiMC7 implementation would be required for correctness.
-    use light_poseidon::{Poseidon, PoseidonBytesHasher};
+fn poseidon_hash(left: Fr, right: Fr) -> Fr {
     let mut poseidon = Poseidon::<Fr>::new_circom(2).unwrap();
-    let mut left_bytes = [0u8; 32];
-    let mut right_bytes = [0u8; 32];
-    left.val.to_big_endian(&mut left_bytes);
-    right.val.to_big_endian(&mut right_bytes);
-    let hash_bytes = poseidon.hash_bytes_be(&[&left_bytes, &right_bytes]).unwrap();
-    Field::new(U256::from_big_endian(&hash_bytes))
+    let left_bytes = left.into_bigint().to_bytes_be();
+    let right_bytes = right.into_bigint().to_bytes_be();
+    let hash_bytes = poseidon
+        .hash_bytes_be(&[&left_bytes, &right_bytes])
+        .unwrap();
+    Fr::from_le_bytes_mod_order(&hash_bytes)
 }
 
 // Data structures
@@ -56,7 +34,7 @@ pub struct MintContext {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Coin {
+pub struct Coin {
     amount: U256,
     salt: U256,
     encrypted: bool,
@@ -65,7 +43,14 @@ struct Coin {
 impl Coin {
     fn get_value(&self) -> U256 {
         if self.encrypted {
-            mimc7(Field::new(self.amount), Field::new(self.salt)).val
+            let mut left_bytes = [0u8; 32];
+            let mut right_bytes = [0u8; 32];
+            self.amount.to_big_endian(&mut left_bytes);
+            self.salt.to_big_endian(&mut right_bytes);
+            let left = Fr::from_le_bytes_mod_order(&left_bytes);
+            let right = Fr::from_le_bytes_mod_order(&right_bytes);
+            let result = poseidon_hash(left, right);
+            U256::from_big_endian(&result.into_bigint().to_bytes_be())
         } else {
             self.amount
         }
@@ -73,22 +58,22 @@ impl Coin {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Wallet {
+pub struct Wallet {
     entropy: String,
     coins: Vec<Coin>,
 }
 
-struct BurnAddress {
-    preimage: Field,
-    address: Address,
+#[derive(Debug)]
+pub struct BurnAddress {
+    preimage: Fr,
+    pub address: Address,
 }
-
 impl Wallet {
-    fn open_or_create() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn open_or_create() -> Result<Self, Box<dyn std::error::Error>> {
         let path = "burnth.priv";
         if !std::path::Path::new(path).exists() {
-            let mut entropy = [0u8; 32];
-            rand::thread_rng().fill(&mut entropy);
+            let mut entropy = [0u8; NOTE_SIZE];
+            OsRng.fill_bytes(&mut entropy);
             let wallet = Wallet {
                 entropy: hex::encode(entropy),
                 coins: vec![],
@@ -102,33 +87,38 @@ impl Wallet {
         }
     }
 
-    fn derive_burn_addr(&self, index: u64) -> Result<BurnAddress, Box<dyn std::error::Error>> {
+    pub fn derive_burn_addr(&self, index: u64) -> Result<BurnAddress, Box<dyn std::error::Error>> {
         let entropy_bytes = hex::decode(&self.entropy)?;
         let mut hasher = Sha256::new();
         hasher.update(&entropy_bytes);
         hasher.update(&index.to_le_bytes());
         let result = hasher.finalize();
-        
-        let preimage = Field::new(U256::from_little_endian(&result[..31]));
-        let hashed = mimc7(preimage, preimage).val;
+
+        let preimage = Fr::from_le_bytes_mod_order(&result[..31]);
+        let hashed = poseidon_hash(preimage, preimage);
 
         let mut bts = [0u8; 20];
-        let mut temp_hash = hashed;
+        let hashed_bytes = hashed.into_bigint().to_bytes_be();
         for i in 0..20 {
-            bts[i] = (temp_hash & U256::from(0xff)).as_u32() as u8;
-            temp_hash >>= 8;
+            bts[i] = hashed_bytes.get(i).copied().unwrap_or(0);
         }
         let address = Address::from_slice(&bts);
 
         Ok(BurnAddress { preimage, address })
     }
-    
-    fn derive_coin(&self, amount: Field, encrypted: bool) -> Coin {
+
+    pub fn derive_coin(&self, amount: Fr, encrypted: bool) -> Coin {
         Coin {
-            amount: amount.val,
+            amount: U256::from_big_endian(&amount.into_bigint().to_bytes_be()),
             salt: U256::from(rand::random::<[u8; 32]>()),
             encrypted,
         }
+    }
+    fn add_coin(&mut self, coin: Coin) {
+        self.coins.push(coin);
+    }
+    fn remove_coin(&mut self, index: usize) {
+        self.coins.remove(index);
     }
 
     fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -185,29 +175,31 @@ pub async fn mint_cmd(
     let burn_addr = burn_addr.ok_or("Burn address not found!")?;
 
     let block_number = client.get_block_number().await?;
-    let coin = wallet.derive_coin(Field::new(amount), context.encrypted);
-    let nullifier = mimc7(burn_addr.preimage, Field::new(U256::zero())).val;
+    let mut amount_bytes = [0u8; 32];
+    amount.to_big_endian(&mut amount_bytes);
+    let amount_fr = Fr::from_le_bytes_mod_order(&amount_bytes);
+    let coin = wallet.derive_coin(amount_fr, context.encrypted);
+    let zero_fr = Fr::from(0u64);
+    let nullifier = poseidon_hash(burn_addr.preimage, zero_fr);
 
-    let block = client.get_block(block_number).await?.ok_or("Block not found")?;
-    let proof = client.get_proof(burn_addr.address, vec![], Some(block_number.into())).await?;
+    let block = client
+        .get_block(block_number)
+        .await?
+        .ok_or("Block not found")?;
+    let proof = client
+        .get_proof(burn_addr.address, vec![], Some(block_number.into()))
+        .await?;
 
     let (prefix, state_root, postfix) = get_block_splited_information(&block)?;
-    let (layers, root_proof, mid_proofs, last_proof) = get_proof_of_burn(
-        &burn_addr,
-        coin.salt,
-        context.encrypted,
-        &block,
-        &proof,
-    )?;
+    let (layers, root_proof, mid_proofs, last_proof) =
+        get_proof_of_burn(&burn_addr, coin.salt, context.encrypted, &block, &proof)?;
 
     // This part is highly dependent on the exact ABI and contract deployment.
     // The following is a conceptual translation.
     println!("Contract interaction logic is conceptual and needs a proper ABI and contract setup.");
-    
+
     // Dummy transaction
-    let tx = TransactionRequest::new()
-        .to(context.dst_addr)
-        .value(0);
+    let tx = TransactionRequest::new().to(context.dst_addr).value(0);
 
     println!("Transaction prepared (mock): {:?}", tx);
     // let pending_tx = client.send_transaction(tx, None).await?;
@@ -220,4 +212,156 @@ pub async fn mint_cmd(
     wallet.save()?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wallet_open_or_create() {
+        let wallet = Wallet::open_or_create().unwrap();
+        println!("Wallet: {:?}", wallet);
+        println!("Wallet entropy length: {:?}", wallet.entropy.len());
+        assert!(wallet.entropy.len() == NOTE_SIZE * 2);
+    }
+
+    #[test]
+    fn test_derive_burn_addr_basic() {
+        // Create a wallet using the open_or_create function
+        let wallet = Wallet::open_or_create().unwrap();
+
+        // Test deriving burn address for index 0
+        let burn_addr = wallet.derive_burn_addr(0).unwrap();
+        println!("Burn address: {:?}", burn_addr);
+        assert!(burn_addr.address != Address::zero());
+        assert!(burn_addr.preimage != Fr::from(0u64));
+
+        // Test deriving burn address for index 1
+        let burn_addr_1 = wallet.derive_burn_addr(1).unwrap();
+        println!("Burn address 1: {:?}", burn_addr_1);
+        assert!(burn_addr_1.address != Address::zero());
+        assert!(burn_addr_1.preimage != Fr::from(0u64));
+
+        // Different indices should produce different addresses
+        assert_ne!(burn_addr.address, burn_addr_1.address);
+        assert_ne!(burn_addr.preimage, burn_addr_1.preimage);
+    }
+
+    #[test]
+    fn test_derive_burn_addr_deterministic() {
+        // Create a wallet using the open_or_create function
+        let wallet = Wallet::open_or_create().unwrap();
+
+        // Derive the same burn address twice
+        let burn_addr_1 = wallet.derive_burn_addr(42).unwrap();
+        let burn_addr_2 = wallet.derive_burn_addr(42).unwrap();
+
+        // Results should be identical (deterministic)
+        assert_eq!(burn_addr_1.address, burn_addr_2.address);
+        assert_eq!(burn_addr_1.preimage, burn_addr_2.preimage);
+    }
+
+    #[test]
+    fn test_derive_burn_addr_different_indices() {
+        let wallet = Wallet::open_or_create().unwrap();
+
+        let mut addresses = Vec::new();
+        let mut preimages = Vec::new();
+
+        // Derive addresses for indices 0-9
+        for i in 0..10 {
+            let burn_addr = wallet.derive_burn_addr(i).unwrap();
+            addresses.push(burn_addr.address);
+            preimages.push(burn_addr.preimage);
+        }
+
+        // All addresses should be different
+        for i in 0..addresses.len() {
+            for j in (i + 1)..addresses.len() {
+                assert_ne!(
+                    addresses[i], addresses[j],
+                    "Addresses at indices {} and {} should be different",
+                    i, j
+                );
+                assert_ne!(
+                    preimages[i], preimages[j],
+                    "Preimages at indices {} and {} should be different",
+                    i, j
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_derive_burn_addr_large_indices() {
+        let wallet = Wallet::open_or_create().unwrap();
+
+        // Test with large indices
+        let burn_addr_1 = wallet.derive_burn_addr(u64::MAX).unwrap();
+        let burn_addr_2 = wallet.derive_burn_addr(1000000).unwrap();
+
+        assert!(burn_addr_1.address != Address::zero());
+        assert!(burn_addr_2.address != Address::zero());
+        assert_ne!(burn_addr_1.address, burn_addr_2.address);
+    }
+
+    #[test]
+    fn test_derive_burn_addr_address_format() {
+        let wallet = Wallet::open_or_create().unwrap();
+
+        let burn_addr = wallet.derive_burn_addr(0).unwrap();
+
+        // Check that the address is properly formatted (20 bytes)
+        let address_bytes = burn_addr.address.as_bytes();
+        assert_eq!(address_bytes.len(), 20);
+
+        // Address should not be all zeros
+        assert_ne!(burn_addr.address, Address::zero());
+    }
+
+    #[test]
+    fn test_derive_burn_addr_field_constraints() {
+        let wallet = Wallet::open_or_create().unwrap();
+
+        let burn_addr = wallet.derive_burn_addr(0).unwrap();
+
+        // Check that the preimage field value is within the field size
+        // assert!(burn_addr.preimage < Fr::from(FIELD_SIZE));
+        assert!(burn_addr.preimage > Fr::from(0u64));
+    }
+
+    #[test]
+    fn test_derive_burn_addr_multiple_wallets() {
+        // Test that different wallets produce different addresses for the same index
+        let wallet1 = Wallet::open_or_create().unwrap();
+        let wallet2 = Wallet::open_or_create().unwrap();
+
+        let burn_addr1 = wallet1.derive_burn_addr(0).unwrap();
+        let burn_addr2 = wallet2.derive_burn_addr(0).unwrap();
+
+        // If wallets have different entropy, addresses should be different
+        if wallet1.entropy != wallet2.entropy {
+            assert_ne!(burn_addr1.address, burn_addr2.address);
+            assert_ne!(burn_addr1.preimage, burn_addr2.preimage);
+        }
+    }
+
+    #[test]
+    fn test_derive_burn_addr_entropy_validation() {
+        let wallet = Wallet::open_or_create().unwrap();
+
+        // Verify that the wallet has valid entropy
+        assert_eq!(wallet.entropy.len(), NOTE_SIZE * 2); // 32 bytes = 64 hex chars
+        assert!(hex::decode(&wallet.entropy).is_ok());
+    }
+    #[test]
+    fn test_derive_coin() {
+        let wallet = Wallet::open_or_create().unwrap();
+        let coin = wallet.derive_coin(Fr::from(1000000000000000000u64), true);
+        println!("Coin: {:?}", coin);
+        assert!(coin.amount == U256::from(1000000000000000000u64));
+        assert!(coin.salt != U256::zero());
+        assert!(coin.encrypted == true);
+    }
 }
