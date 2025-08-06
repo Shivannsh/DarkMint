@@ -1,7 +1,7 @@
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use ethers::{
-    core::types::TransactionRequest,
+    core::{k256::elliptic_curve::rand_core::block, types::TransactionRequest},
     prelude::*,
     providers::{Http, Provider},
 };
@@ -10,6 +10,7 @@ use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs, io::Write};
+use rlp::{RlpStream, Rlp};
 
 const NOTE_SIZE: usize = 32;
 
@@ -146,16 +147,81 @@ fn get_proof_of_burn(
 
 // Placeholder for block splitting logic
 fn get_block_splited_information(
-    _block: &Block<TxHash>,
+    block: &Block<TxHash>,
 ) -> Result<(Bytes, H256, Bytes), Box<dyn std::error::Error>> {
-    println!("Warning: Block splitting is mocked.");
-    Ok((Bytes::default(), H256::default(), Bytes::default()))
+   
+    // Create RLP stream for block header
+    let mut stream = RlpStream::new_list(15); // Base header fields
+    
+    // Add required header fields
+    stream.append(&block.parent_hash.as_bytes());
+    stream.append(&block.uncles_hash.as_bytes());
+    stream.append(&block.author.unwrap_or_default().as_bytes());
+    stream.append(&block.state_root.as_bytes());
+    stream.append(&block.transactions_root.as_bytes());
+    stream.append(&block.receipts_root.as_bytes());
+    stream.append(&block.logs_bloom.unwrap_or_default().as_bytes());
+    stream.append(&block.difficulty);
+    stream.append(&block.number.unwrap_or_default());
+    stream.append(&block.gas_limit);
+    stream.append(&block.gas_used);
+    stream.append(&block.timestamp);
+    stream.append(&block.extra_data.to_vec());
+    stream.append(&block.mix_hash.unwrap_or_default().as_bytes());
+    stream.append(&block.nonce.unwrap_or_default().as_bytes());
+    
+    // Add optional EIP-1559 fields if present
+    if let Some(base_fee) = block.base_fee_per_gas {
+        stream.append(&base_fee);
+    }
+    
+    // Add optional EIP-4844 fields if present
+    if let Some(blob_gas_used) = block.blob_gas_used {
+        stream.append(&blob_gas_used);
+    }
+    if let Some(excess_blob_gas) = block.excess_blob_gas {
+        stream.append(&excess_blob_gas);
+    }
+    
+    // Add optional withdrawals root if present
+    if let Some(withdrawals_root) = block.withdrawals_root {
+        stream.append(&withdrawals_root.as_bytes());
+    }
+    
+    // Add optional parent beacon block root if present
+    if let Some(parent_beacon_block_root) = block.parent_beacon_block_root {
+        stream.append(&parent_beacon_block_root.as_bytes());
+    }
+    
+    let header_rlp = stream.out();
+    
+    // Verify the header hash matches
+    let computed_hash = keccak256(&header_rlp);
+    let block_hash = block.hash.unwrap_or_default();
+    
+    if computed_hash != block_hash.as_bytes() {
+        return Err("Block header hash verification failed".into());
+    }
+    
+    // Find state root position in RLP
+    let state_root_bytes = block.state_root.as_bytes();
+    let state_root_start = header_rlp.windows(state_root_bytes.len())
+        .position(|window| window == state_root_bytes)
+        .ok_or("State root not found in header")?;
+    
+    let state_root_end = state_root_start + state_root_bytes.len();
+    
+    // Split the header
+    let prefix = Bytes::from(header_rlp[..state_root_start].to_vec());
+    let commit_top = block.state_root;
+    let postfix = Bytes::from(header_rlp[state_root_end..].to_vec());
+    
+    Ok((prefix, commit_top, postfix))
 }
-
 pub async fn mint_cmd(
     provider_url: &str,
     context: MintContext,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(Address, Block<TxHash>, EIP1186ProofResponse,Coin, Bytes, H256, Bytes), Box<dyn std::error::Error>> {
     let provider = Provider::<Http>::try_from(provider_url)?;
     let client = SignerMiddleware::new(provider, context.priv_fee_payer.clone());
 
@@ -181,37 +247,43 @@ pub async fn mint_cmd(
     let coin = wallet.derive_coin(amount_fr, context.encrypted);
     let zero_fr = Fr::from(0u64);
     let nullifier = poseidon_hash(burn_addr.preimage, zero_fr);
-
+    let layers = Vec::new();
     let block = client
         .get_block(block_number)
         .await?
         .ok_or("Block not found")?;
-    let proof = client
-        .get_proof(burn_addr.address, vec![], Some(block_number.into()))
-        .await?;
+    let proof = client.get_proof(burn_addr.address, vec![], Some(block_number)).await?;
 
     let (prefix, state_root, postfix) = get_block_splited_information(&block)?;
-    let (layers, root_proof, mid_proofs, last_proof) =
-        get_proof_of_burn(&burn_addr, coin.salt, context.encrypted, &block, &proof)?;
+    // let (layers, root_proof, mid_proofs, last_proof) =
+    //     get_proof_of_burn(&burn_addr, coin.salt, context.encrypted, &block, &proof)?;
 
-    // This part is highly dependent on the exact ABI and contract deployment.
-    // The following is a conceptual translation.
-    println!("Contract interaction logic is conceptual and needs a proper ABI and contract setup.");
+    // // This part is highly dependent on the exact ABI and contract deployment.
+    // // The following is a conceptual translation.
+    // println!("Contract interaction logic is conceptual and needs a proper ABI and contract setup.");
 
-    // Dummy transaction
-    let tx = TransactionRequest::new().to(context.dst_addr).value(0);
+    // // Dummy transaction
+    // let tx = TransactionRequest::new().to(context.dst_addr).value(0);
 
-    println!("Transaction prepared (mock): {:?}", tx);
-    // let pending_tx = client.send_transaction(tx, None).await?;
-    // let _receipt = pending_tx.await?;
-    println!("Transaction would be sent here.");
+    // println!("Transaction prepared (mock): {:?}", tx);
+    // // let pending_tx = client.send_transaction(tx, None).await?;
+    // // let _receipt = pending_tx.await?;
+    // println!("Transaction would be sent here.");
 
-    if context.encrypted {
-        wallet.coins.push(coin);
-    }
-    wallet.save()?;
+    // if context.encrypted {
+    //     wallet.coins.push(coin);
+    // }
+    // wallet.save()?;
 
-    Ok(())
+    Ok((
+        burn_addr.address,
+        block,
+        proof,
+        coin,
+        prefix,
+        state_root,
+        postfix,
+    ))
 }
 
 #[cfg(test)]

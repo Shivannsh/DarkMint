@@ -1,30 +1,111 @@
-//! A simple program that takes a number `n` as input, and writes the `n-1`th and `n`th fibonacci
-//! number as an output.
-
-// These two lines are necessary for the program to properly compile.
-//
-// Under the hood, we wrap your main function with some extra code so that it behaves properly
-// inside the zkVM.
-#![no_main]
-sp1_zkvm::entrypoint!(main);
+//! An end-to-end example of using the SP1 SDK to generate a proof of a program that can be executed
+//! or have a core proof generated.
+//!
+//! You can run this script using the following command:
+//! ```shell
+//! RUST_LOG=info cargo run --release -- --execute
+//! ```
+//! or
+//! ```shell
+//! RUST_LOG=info cargo run --release -- --prove
+//! ```
 
 use alloy_sol_types::SolType;
-use fibonacci_lib::{fibonacci, PublicValuesStruct};
+use clap::Parser;
+use fibonacci_lib::{ mint, burn};
+use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
+use ethers::{
+    core::types::{Address, Block, TxHash},
+    types::EIP1186ProofResponse,
+};
 
-pub fn main() {
-    // Read an input to the program.
-    //
-    // Behind the scenes, this compiles down to a custom system call which handles reading inputs
-    // from the prover.
-    let n = sp1_zkvm::io::read::<u32>();
+/// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
+pub const FIBONACCI_ELF: &[u8] = include_elf!("fibonacci-program");
 
-    // Compute the n'th fibonacci number using a function from the workspace lib crate.
-    let (a, b) = fibonacci(n);
+/// The arguments for the command.
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(long)]
+    execute: bool,
 
-    // Encode the public values of the program.
-    let bytes = PublicValuesStruct::abi_encode(&PublicValuesStruct { n, a, b });
+    #[arg(long)]
+    prove: bool,
 
-    // Commit to the public values of the program. The final proof will have a commitment to all the
-    // bytes that were committed to.
-    sp1_zkvm::io::commit_slice(&bytes);
+    #[arg(long, default_value = "20")]
+    encrypted: bool,
+    
+    #[arg(long)]
+    priv_src: String,
+
+    #[arg(long)]
+    dst_addr: String,
+
+    #[arg(long)]
+    src_burn_addr: String,
+}
+
+async fn main() {
+    // Setup the logger.
+    sp1_sdk::utils::setup_logger();
+    dotenv::dotenv().ok();
+
+    // Parse the command line arguments.
+    let args = Args::parse();
+
+
+    if args.execute == args.prove {
+        eprintln!("Error: You must specify either --execute or --prove");
+        std::process::exit(1);
+    }
+
+    let context = MintContext::new(args.src_burn_addr, args.dst_addr, args.encrypted, args.priv_src);
+
+    let (burn_addr, block, proof, coin, prefix, state_root, postfix): (Address, Block<TxHash>, EIP1186ProofResponse, Coin, Bytes, H256, Bytes) = mint_cmd(provider_url, context).await?;
+
+    // Setup the prover client.
+    let client = ProverClient::from_env();
+
+    // Setup the inputs.
+    let mut stdin = SP1Stdin::new();
+
+    stdin.write(&prefix);
+    stdin.write(&state_root);
+    stdin.write(&postfix);
+
+    if args.execute {
+        // Execute the program
+        let (output, report) = client.execute(FIBONACCI_ELF, &stdin).run().unwrap();
+        println!("Program executed successfully.");
+
+        // Read the output.
+        let decoded = PublicValuesStruct::abi_decode(output.as_slice()).unwrap();
+        let PublicValuesStruct { n, a, b } = decoded;
+        println!("n: {}", n);
+        println!("a: {}", a);
+        println!("b: {}", b);
+
+        let (expected_a, expected_b) = fibonacci_lib::fibonacci(n);
+        assert_eq!(a, expected_a);
+        assert_eq!(b, expected_b);
+        println!("Values are correct!");
+
+        // Record the number of cycles executed.
+        println!("Number of cycles: {}", report.total_instruction_count());
+    } else {
+        // Setup the program for proving.
+        let (pk, vk) = client.setup(FIBONACCI_ELF);
+
+        // Generate the proof
+        let proof = client
+            .prove(&pk, &stdin)
+            .run()
+            .expect("failed to generate proof");
+
+        println!("Successfully generated proof!");
+
+        // Verify the proof.
+        client.verify(&proof, &vk).expect("failed to verify proof");
+        println!("Successfully verified proof!");
+    }
 }

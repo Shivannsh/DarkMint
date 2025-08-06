@@ -12,8 +12,12 @@
 
 use alloy_sol_types::SolType;
 use clap::Parser;
-use fibonacci_lib::PublicValuesStruct;
+use fibonacci_lib::{ mint, burn};
 use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
+use ethers::{
+    core::types::{Address, Block, TxHash},
+    types::EIP1186ProofResponse,
+};
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 pub const FIBONACCI_ELF: &[u8] = include_elf!("fibonacci-program");
@@ -29,10 +33,19 @@ struct Args {
     prove: bool,
 
     #[arg(long, default_value = "20")]
-    n: u32,
+    encrypted: bool,
+    
+    #[arg(long)]
+    priv_src: String,
+
+    #[arg(long)]
+    dst_addr: String,
+
+    #[arg(long)]
+    src_burn_addr: String,
 }
 
-fn main() {
+async fn main() {
     // Setup the logger.
     sp1_sdk::utils::setup_logger();
     dotenv::dotenv().ok();
@@ -40,19 +53,25 @@ fn main() {
     // Parse the command line arguments.
     let args = Args::parse();
 
+
     if args.execute == args.prove {
         eprintln!("Error: You must specify either --execute or --prove");
         std::process::exit(1);
     }
+
+    let context = MintContext::new(args.src_burn_addr, args.dst_addr, args.encrypted, args.priv_src);
+
+    let (burn_addr, block, proof, coin, prefix, state_root, postfix): (Address, Block<TxHash>, EIP1186ProofResponse, Coin, Bytes, H256, Bytes) = mint_cmd(provider_url, context).await?;
 
     // Setup the prover client.
     let client = ProverClient::from_env();
 
     // Setup the inputs.
     let mut stdin = SP1Stdin::new();
-    stdin.write(&args.n);
 
-    println!("n: {}", args.n);
+    stdin.write(&prefix);
+    stdin.write(&state_root);
+    stdin.write(&postfix);
 
     if args.execute {
         // Execute the program
