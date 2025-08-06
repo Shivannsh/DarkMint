@@ -35,9 +35,9 @@ pub struct MintContext {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Coin {
-    amount: U256,
-    salt: U256,
-    encrypted: bool,
+    pub amount: U256,
+    pub salt: U256,
+    pub encrypted: bool,
 }
 
 impl Coin {
@@ -65,7 +65,7 @@ pub struct Wallet {
 
 #[derive(Debug)]
 pub struct BurnAddress {
-    preimage: Fr,
+    pub preimage: Fr,
     pub address: Address,
 }
 impl Wallet {
@@ -220,7 +220,7 @@ fn get_block_splited_information(
 pub async fn mint_cmd(
     provider_url: &str,
     context: MintContext,
-) -> Result<(Address, Block<TxHash>, EIP1186ProofResponse,Coin, Bytes, H256, Bytes), Box<dyn std::error::Error>> {
+) -> Result<(BurnAddress, Block<TxHash>, EIP1186ProofResponse,Coin, Bytes, H256, Bytes), Box<dyn std::error::Error>> {
     let provider = Provider::<Http>::try_from(provider_url)?;
     let client = SignerMiddleware::new(provider, context.priv_fee_payer.clone());
 
@@ -274,7 +274,7 @@ pub async fn mint_cmd(
     // wallet.save()?;
 
     Ok((
-        burn_addr.address,
+        burn_addr,
         block,
         proof,
         coin,

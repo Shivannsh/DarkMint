@@ -12,12 +12,13 @@
 
 use alloy_sol_types::SolType;
 use clap::Parser;
-use fibonacci_lib::{ mint, burn};
+use fibonacci_lib::{ mint::{Coin, BurnAddress, MintContext, mint_cmd}, burn, PublicValuesStruct};
 use sp1_sdk::{include_elf, ProverClient, SP1Stdin};
 use ethers::{
-    core::types::{Address, Block, TxHash},
+    core::types::{Address, Block, TxHash,Bytes,H256},
     types::EIP1186ProofResponse,
 };
+use rlp::RlpStream;
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
 pub const FIBONACCI_ELF: &[u8] = include_elf!("fibonacci-program");
@@ -43,6 +44,29 @@ struct Args {
 
     #[arg(long)]
     src_burn_addr: String,
+
+    #[arg(long, default_value = "http://127.0.0.1:8545")]
+    provider_url: String,
+}
+
+/// Calculate lower layer prefix from MPT proof
+fn calculate_lower_layer_prefix(proof: &EIP1186ProofResponse) -> (u32, Vec<u8>) {
+    // RLP encode the account data
+    let mut stream = RlpStream::new_list(4);
+    stream.append(&proof.nonce);
+    stream.append(&proof.balance);
+    stream.append(&proof.storage_hash.as_slice());
+    stream.append(&proof.code_hash.as_slice());
+    let account_rlp = stream.out();
+    
+    // Get the last proof element (the account proof)
+    let account_proof = proof.account_proof.last().unwrap();
+    
+    // Calculate the prefix by removing the account RLP from the end
+    let prefix_len = account_proof.len() - account_rlp.len();
+    let lower_layer_prefix = account_proof[..prefix_len].to_vec();
+    
+    (prefix_len as u32, lower_layer_prefix)
 }
 
 async fn main() {
@@ -53,7 +77,6 @@ async fn main() {
     // Parse the command line arguments.
     let args = Args::parse();
 
-
     if args.execute == args.prove {
         eprintln!("Error: You must specify either --execute or --prove");
         std::process::exit(1);
@@ -61,7 +84,10 @@ async fn main() {
 
     let context = MintContext::new(args.src_burn_addr, args.dst_addr, args.encrypted, args.priv_src);
 
-    let (burn_addr, block, proof, coin, prefix, state_root, postfix): (Address, Block<TxHash>, EIP1186ProofResponse, Coin, Bytes, H256, Bytes) = mint_cmd(provider_url, context).await?;
+    let (burn_addr, block, proof, coin, prefix, state_root, postfix): (BurnAddress, Block<TxHash>, EIP1186ProofResponse, Coin, Bytes, H256, Bytes) = mint_cmd(&args.provider_url, context).await?;
+
+    // Calculate lower layer prefix from the MPT proof
+    let (lower_layer_prefix_len, lower_layer_prefix) = calculate_lower_layer_prefix(&proof);
 
     // Setup the prover client.
     let client = ProverClient::from_env();
@@ -69,9 +95,17 @@ async fn main() {
     // Setup the inputs.
     let mut stdin = SP1Stdin::new();
 
-    stdin.write(&prefix);
-    stdin.write(&state_root);
-    stdin.write(&postfix);
+    stdin.write(&burn_addr.preimage);
+    stdin.write(&lower_layer_prefix_len);
+    stdin.write(&lower_layer_prefix);
+    stdin.write(&proof.nonce);
+    stdin.write(&proof.balance);
+    stdin.write(&proof.storage_hash);
+    stdin.write(&proof.code_hash);
+    stdin.write(&proof.account_proof);
+    stdin.write(&block.state_root);
+    stdin.write(&coin.salt);
+    stdin.write(&coin.encrypted);
 
     if args.execute {
         // Execute the program
@@ -80,15 +114,12 @@ async fn main() {
 
         // Read the output.
         let decoded = PublicValuesStruct::abi_decode(output.as_slice()).unwrap();
-        let PublicValuesStruct { n, a, b } = decoded;
-        println!("n: {}", n);
-        println!("a: {}", a);
-        println!("b: {}", b);
-
-        let (expected_a, expected_b) = fibonacci_lib::fibonacci(n);
-        assert_eq!(a, expected_a);
-        assert_eq!(b, expected_b);
-        println!("Values are correct!");
+        let PublicValuesStruct { burn_preimage, commit_upper, encrypted_balance, nullifier, encrypted } = decoded;
+        println!("burn_preimage: {}", burn_preimage);
+        println!("commit_upper: {}", commit_upper);
+        println!("encrypted_balance: {}", encrypted_balance);
+        println!("nullifier: {}", nullifier);
+        println!("encrypted: {}", encrypted);
 
         // Record the number of cycles executed.
         println!("Number of cycles: {}", report.total_instruction_count());
