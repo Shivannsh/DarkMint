@@ -23,6 +23,8 @@ use clap::Parser;
 use rlp::RlpStream;
 use sp1_sdk::{include_elf, HashableKey, ProverClient, SP1Stdin};
 
+use anyhow::{Result};
+
 use rustls::crypto::ring::default_provider;
 use rustls::crypto::CryptoProvider;
 use serde::{Deserialize, Serialize};
@@ -262,9 +264,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut file = File::create("proof.json").unwrap();
         file.write_all(json_string.as_bytes()).unwrap();
 
-        // Verify the proof.
-        // client.verify(&proof.clone(), &vk).expect("failed to verify proof");
-        println!("Successfully verified proof!");
+        // Submit proof to API
+        println!("Submitting proof to API for verification and aggregation...");
+
+        // Call the proof verification API
+        let client = reqwest::Client::new();
+        let response = client
+            .post("http://localhost:3001/verify-proof")
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let result: serde_json::Value = response.json().await?;
+            println!("Proof verification and aggregation completed successfully!");
+            println!("Result: {}", serde_json::to_string_pretty(&result).unwrap());
+        } else {
+            let error_text = response.text().await?;
+            eprintln!("Error calling proof verification API: {error_text}");
+            return Err("Failed to verify and aggregate proof".into());
+        }
     }
     Ok(())
 }

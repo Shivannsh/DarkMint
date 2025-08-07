@@ -41,6 +41,9 @@ rustls = { version = "0.23", features = ["ring"] }
 tiny-keccak ={version = "2.0.2" , features = ["keccak"]}
 bincode = { version = "2", features = ["serde"] }
 sp1-zkv-sdk = { git="https://github.com/zkVerify/sp1-verifier" }
+reqwest = { version = "0.11", features = ["json"] }
+
+anyhow = "1.0"
 
 [build-dependencies]
 sp1-build = "5.2.1"

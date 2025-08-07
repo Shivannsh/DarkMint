@@ -327,6 +327,8 @@ impl Wallet {
 pub mod burn;
 pub mod mint;
 
+
 // Re-export commonly used functions and types
 pub use burn::burn_cmd;
 pub use mint::{mint_cmd, MintContext};
+
