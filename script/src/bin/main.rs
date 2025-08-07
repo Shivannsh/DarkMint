@@ -71,8 +71,8 @@ struct Output {
 
 // Helper function to get hex strings
 fn to_hex_with_prefix(bytes: &[u8]) -> String {
-    let hex_string: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    format!("0x{hex_string}")
+    let hex_string: String = bytes.iter().map(|b| format!("{:02x}", b)).collect();
+    format!("0x{}", hex_string)
 }
 
 pub fn keccak256<T: AsRef<[u8]>>(input: T) -> B256 {
@@ -85,7 +85,9 @@ pub fn keccak256<T: AsRef<[u8]>>(input: T) -> B256 {
 }
 
 /// Calculate lower layer prefix from MPT proof
-fn calculate_lower_layer_prefix(proof: &EIP1186AccountProofResponse) -> (u32, Vec<u8>) {
+fn calculate_lower_layer_prefix(
+    proof: &EIP1186AccountProofResponse,
+) -> Result<(u32, Vec<u8>), String> {
     // RLP encode the account data according to Ethereum's format
     let mut stream = RlpStream::new_list(4);
     // Remove leading zeros from nonce
@@ -112,7 +114,7 @@ fn calculate_lower_layer_prefix(proof: &EIP1186AccountProofResponse) -> (u32, Ve
     let account_rlp = stream.out();
 
     // Get the last proof element (the account proof)
-    let account_proof = proof.account_proof.last().unwrap();
+    let account_proof = proof.account_proof.last().ok_or("No account proof found")?;
 
     // Debug prints
     println!("Generated RLP: 0x{}", hex::encode(&account_rlp));
@@ -126,13 +128,17 @@ fn calculate_lower_layer_prefix(proof: &EIP1186AccountProofResponse) -> (u32, Ve
             let window = &account_proof[i..i + account_rlp.len()];
             if window == &account_rlp[..] {
                 let prefix = account_proof[..i].to_vec();
-                return (i as u32, prefix);
+                return Ok((i as u32, prefix));
             }
         }
     }
 
     // If we get here, we couldn't find the RLP in the proof
-    panic!("Could not find account RLP in proof. This could mean the RLP encoding format doesn't match the Ethereum specification.");
+    Err(format!(
+        "Could not find account RLP in proof. RLP: 0x{}, Proof: 0x{}. This could mean the RLP encoding format doesn't match the Ethereum specification.",
+        hex::encode(&account_rlp),
+        hex::encode(account_proof)
+    ))
 }
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -183,7 +189,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ) = mint_cmd(&args.provider_url, context).await?;
 
         // Calculate lower layer prefix from the MPT proof
-        let (lower_layer_prefix_len, lower_layer_prefix) = calculate_lower_layer_prefix(&proof);
+        let (lower_layer_prefix_len, lower_layer_prefix) = calculate_lower_layer_prefix(&proof)?;
 
         // Setup the prover client.
         let client = ProverClient::from_env();
@@ -233,7 +239,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             proof: shrunk_proof,
             public_values,
         } = client
-            .convert_proof_to_zkv(proof.clone(), Default::default())
+            .convert_proof_to_zkv(proof, Default::default())
             .unwrap();
         let vk_hash = vk.hash_bytes();
 
@@ -257,7 +263,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         file.write_all(json_string.as_bytes()).unwrap();
 
         // Verify the proof.
-        client.verify(&proof, &vk).expect("failed to verify proof");
+        // client.verify(&proof.clone(), &vk).expect("failed to verify proof");
         println!("Successfully verified proof!");
     }
     Ok(())

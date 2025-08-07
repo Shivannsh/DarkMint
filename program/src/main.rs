@@ -365,6 +365,8 @@ pub fn main() {
         code_hash: inputs.code_hash,
         salt: salt_fr,
         encrypted: inputs.encrypted,
+        account_proof: inputs.account_proof.clone(),
+        state_root: inputs.state_root,
     };
 
     let circuit_outputs = mpt_last_circuit(circuit_inputs);

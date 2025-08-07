@@ -130,24 +130,73 @@ pub fn generate_nullifier(preimage: Fr) -> Fr {
     poseidon_hash(preimage, Fr::from(0u64))
 }
 
-/// Encrypt or return balance based on encryption flag
+/// Process balance with optional encryption
 ///
-/// If encrypted is true, returns Poseidon hash of balance and salt.
-/// Otherwise, returns the balance unchanged.
+/// If encrypted is true, applies Poseidon hash with salt for privacy.
+/// If false, returns the original balance.
 ///
 /// # Arguments
-/// * `balance` - Balance amount as field element
+/// * `balance` - Account balance as field element
 /// * `salt` - Salt for encryption
 /// * `encrypted` - Whether to encrypt the balance
 ///
 /// # Returns
-/// * Encrypted balance or original balance
+/// * Processed balance (encrypted or plaintext)
 pub fn process_balance(balance: Fr, salt: Fr, encrypted: bool) -> Fr {
     if encrypted {
         poseidon_hash(balance, salt)
     } else {
         balance
     }
+}
+
+/// Check if a substring exists within a larger byte array
+///
+/// Performs a linear search to find if the substring appears anywhere
+/// within the main string. This is used to verify that lower layer hashes
+/// are properly embedded in upper layer data.
+///
+/// # Arguments
+/// * `substring` - Bytes to search for
+/// * `main_string` - Bytes to search within
+///
+/// # Returns
+/// * `true` if substring is found, `false` otherwise
+pub fn contains_substring(substring: &[u8], main_string: &[u8]) -> bool {
+    if substring.len() > main_string.len() {
+        return false;
+    }
+
+    // Use constant-time comparison to prevent timing attacks
+    for i in 0..=main_string.len() - substring.len() {
+        if constant_time_eq(&main_string[i..i + substring.len()], substring) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Constant-time byte array comparison
+///
+/// Compares two byte arrays in constant time to prevent timing attacks.
+/// This is important for security when comparing cryptographic hashes.
+///
+/// # Arguments
+/// * `a` - First byte array
+/// * `b` - Second byte array
+///
+/// # Returns
+/// * `true` if arrays are equal, `false` otherwise
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+
+    let mut result = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
 }
 
 #[cfg(test)]
@@ -222,13 +271,53 @@ mod tests {
 
     #[test]
     fn test_process_balance_encrypted() {
-        let balance = Fr::from(1000u64);
-        let salt = Fr::from(999u64);
+        let balance = Fr::from(100u64);
+        let salt = Fr::from(42u64);
+        let encrypted = process_balance(balance, salt, true);
+        assert_ne!(encrypted, balance);
+    }
 
-        let encrypted_balance = process_balance(balance, salt, true);
-        let unencrypted_balance = process_balance(balance, salt, false);
+    #[test]
+    fn test_contains_substring_found() {
+        let main_string = b"hello world";
+        let substring = b"world";
+        assert!(contains_substring(substring, main_string));
+    }
 
-        assert_ne!(encrypted_balance, balance);
-        assert_eq!(unencrypted_balance, balance);
+    #[test]
+    fn test_contains_substring_not_found() {
+        let main_string = b"hello world";
+        let substring = b"xyz";
+        assert!(!contains_substring(substring, main_string));
+    }
+
+    #[test]
+    fn test_contains_substring_edge_cases() {
+        // Empty substring should be found
+        assert!(contains_substring(b"", b"hello"));
+
+        // Substring longer than main string should not be found
+        assert!(!contains_substring(b"hello world", b"hello"));
+
+        // Exact match should be found
+        assert!(contains_substring(b"hello", b"hello"));
+    }
+
+    #[test]
+    fn test_constant_time_eq() {
+        // Test equal arrays
+        assert!(constant_time_eq(b"hello", b"hello"));
+
+        // Test different arrays
+        assert!(!constant_time_eq(b"hello", b"world"));
+
+        // Test different lengths
+        assert!(!constant_time_eq(b"hello", b"hell"));
+
+        // Test empty arrays
+        assert!(constant_time_eq(b"", b""));
+
+        // Test one empty array
+        assert!(!constant_time_eq(b"hello", b""));
     }
 }

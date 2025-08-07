@@ -139,8 +139,9 @@ fn verify_substring_constraint(
 ) -> Result<(), &'static str> {
     let substring_found = contains_substring(keccak_lower, upper_layer_bytes);
 
-    // Constraint: substring_found should equal !is_top
-    if substring_found != is_top {
+    // For non-top layers: the lower layer hash should be contained in upper layer
+    // For top layer: we don't check substring containment (handled by state root verification)
+    if (is_top && !substring_found) || (!is_top && substring_found) {
         Ok(())
     } else {
         Err("Substring containment constraint violated")

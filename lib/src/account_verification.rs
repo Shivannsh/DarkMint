@@ -8,8 +8,8 @@ use ark_bn254::Fr;
 use rlp::RlpStream;
 
 use crate::crypto::{
-    derive_burn_address, generate_nullifier, hash_ethereum_address, poseidon_hash, process_balance,
-    ADDRESS_LENGTH, SECURITY_PARAMETER,
+    contains_substring, derive_burn_address, generate_nullifier, hash_ethereum_address, keccak256,
+    poseidon_hash, process_balance, ADDRESS_LENGTH, SECURITY_PARAMETER,
 };
 
 /// Input parameters for account proof verification circuit
@@ -36,6 +36,10 @@ pub struct AccountProofInputs {
     pub salt: Fr,
     /// Whether the balance should be encrypted in output
     pub encrypted: bool,
+    /// Account proof data for verification
+    pub account_proof: Vec<Vec<u8>>,
+    /// Expected state root for verification
+    pub state_root: [u8; 32],
 }
 
 /// Output values from account proof verification circuit
@@ -73,9 +77,23 @@ fn encode_account_rlp(
 ) -> Vec<u8> {
     let mut stream = RlpStream::new_list(4);
 
-    // Convert to big-endian for RLP encoding as per Ethereum specification
-    stream.append(&nonce.to_be_bytes().as_slice());
-    stream.append(&balance.to_be_bytes().as_slice());
+    // Remove leading zeros from nonce (Ethereum RLP specification)
+    let nonce_bytes: Vec<u8> = nonce
+        .to_be_bytes()
+        .into_iter()
+        .skip_while(|&x| x == 0)
+        .collect();
+    stream.append(&nonce_bytes);
+
+    // Remove leading zeros from balance (Ethereum RLP specification)
+    let balance_bytes: Vec<u8> = balance
+        .to_be_bytes()
+        .into_iter()
+        .skip_while(|&x| x == 0)
+        .collect();
+    stream.append(&balance_bytes);
+
+    // Storage and code hash are already 32 bytes
     stream.append(&storage_hash.as_slice());
     stream.append(&code_hash.as_slice());
 
@@ -148,6 +166,45 @@ fn calculate_upper_layer_commitment(
     poseidon_hash(upper_layer_hash, salt)
 }
 
+/// Verify account proof structure against MPT proof data
+///
+/// This function implements the critical verification step that ensures
+/// the account RLP data is properly embedded in the MPT proof structure.
+/// It verifies that keccak(prefix + account_rlp) is contained in the
+/// previous proof element, which is the standard Ethereum MPT verification.
+///
+/// # Arguments
+/// * `account_proof` - Vector of proof layers from bottom to top
+/// * `account_rlp` - RLP-encoded account data
+///
+/// # Returns
+/// * `true` if verification passes, `false` otherwise
+fn verify_account_proof_structure(account_proof: &[Vec<u8>], account_rlp: &[u8]) -> bool {
+    if account_proof.len() < 2 {
+        return false;
+    }
+
+    let last_proof = &account_proof[account_proof.len() - 1];
+    let previous_proof = &account_proof[account_proof.len() - 2];
+
+    // Find the prefix by locating where account_rlp starts in the last proof
+    for i in 0..=last_proof.len().saturating_sub(account_rlp.len()) {
+        if i + account_rlp.len() <= last_proof.len() {
+            let window = &last_proof[i..i + account_rlp.len()];
+            if window == account_rlp {
+                let prefix = &last_proof[..i];
+                let combined = [prefix, account_rlp].concat();
+                let hash = keccak256(&combined);
+
+                // Verify that the hash is contained in the previous proof element
+                return contains_substring(&hash.0, previous_proof);
+            }
+        }
+    }
+
+    false
+}
+
 /// Main account verification circuit implementation
 ///
 /// This function implements the core logic for verifying Ethereum account proofs
@@ -159,13 +216,18 @@ fn calculate_upper_layer_commitment(
 /// 3. Processes balance (encrypt or keep plaintext)
 /// 4. RLP encodes account data
 /// 5. Verifies MPT proof structure
-/// 6. Generates upper layer commitment
+/// 6. Verifies state root
+/// 7. Generates upper layer commitment
 ///
 /// # Arguments
 /// * `inputs` - Account proof input parameters
 ///
 /// # Returns
 /// * Account proof outputs including commitments and nullifier
+///
+/// # Panics
+/// * If account proof verification fails
+/// * If state root verification fails
 pub fn verify_account_proof(inputs: AccountProofInputs) -> AccountProofOutputs {
     // Step 1: Derive burn address from preimage
     let burn_address = derive_burn_address(inputs.burn_preimage);
@@ -185,12 +247,24 @@ pub fn verify_account_proof(inputs: AccountProofInputs) -> AccountProofOutputs {
         &inputs.code_hash,
     );
 
-    // Step 5: Generate and verify expected prefix structure
-    let _expected_prefix = generate_expected_prefix(&burn_address, account_rlp.len());
-    // Note: In a full implementation, we would verify that the expected_prefix
-    // matches the structure found in the MPT proof
+    // Step 5: Verify account proof structure
+    if !verify_account_proof_structure(&inputs.account_proof, &account_rlp) {
+        panic!("Account proof verification failed: invalid MPT proof structure");
+    }
 
-    // Step 6: Calculate upper layer commitment
+    // Step 6: Verify state root (if account proof is not empty)
+    if !inputs.account_proof.is_empty() {
+        let final_proof = &inputs.account_proof[0]; // Top layer
+        let final_hash = keccak256(final_proof);
+        if final_hash.0 != inputs.state_root {
+            panic!(
+                "State root verification failed: expected {:?}, got {:?}",
+                inputs.state_root, final_hash.0
+            );
+        }
+    }
+
+    // Step 7: Calculate upper layer commitment
     let commit_upper = calculate_upper_layer_commitment(
         &inputs.lower_layer_prefix,
         inputs.lower_layer_prefix_len,
@@ -220,6 +294,8 @@ mod tests {
             code_hash: [0u8; 32],
             salt: Fr::from(789u64),
             encrypted: false,
+            account_proof: vec![], // Placeholder for test
+            state_root: [0u8; 32], // Placeholder for test
         }
     }
 
@@ -295,5 +371,47 @@ mod tests {
 
         let commitment = calculate_upper_layer_commitment(&prefix, 3, &account_rlp, salt);
         assert_ne!(commitment, Fr::from(0u64));
+    }
+
+    #[test]
+    fn test_verify_account_proof_structure_valid() {
+        // Create a mock account proof with valid structure
+        let account_rlp = vec![1, 2, 3, 4]; // Mock RLP data
+        let prefix = vec![5, 6, 7]; // Mock prefix
+        let combined = [&prefix[..], &account_rlp[..]].concat();
+        let hash = keccak256(&combined);
+
+        let account_proof = vec![
+            vec![hash.0.to_vec(), vec![9, 10]].concat(), // Previous layer containing hash
+            [prefix, account_rlp.clone()].concat(),      // Current layer with prefix + RLP
+        ];
+
+        assert!(verify_account_proof_structure(&account_proof, &account_rlp));
+    }
+
+    #[test]
+    fn test_verify_account_proof_structure_invalid() {
+        // Create a mock account proof with invalid structure
+        let account_rlp = vec![1, 2, 3, 4];
+        let account_proof = vec![
+            vec![1, 2, 3],    // Previous layer without hash
+            vec![5, 6, 7, 8], // Current layer without RLP
+        ];
+
+        assert!(!verify_account_proof_structure(
+            &account_proof,
+            &account_rlp
+        ));
+    }
+
+    #[test]
+    fn test_verify_account_proof_structure_insufficient_layers() {
+        let account_rlp = vec![1, 2, 3, 4];
+        let account_proof = vec![vec![1, 2, 3, 4]]; // Only one layer
+
+        assert!(!verify_account_proof_structure(
+            &account_proof,
+            &account_rlp
+        ));
     }
 }
