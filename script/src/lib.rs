@@ -114,10 +114,12 @@ impl Coin {
     }
 }
 
+
 /// Represents a DarkMint wallet containing entropy and coins
 ///
 /// The wallet manages user's privacy-preserving coins and derives
 /// burn addresses deterministically from entropy.
+/// 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Wallet {
     /// Hex-encoded entropy for address derivation
@@ -325,10 +327,9 @@ impl Wallet {
 
 // Re-export modules for external use
 pub mod burn;
+pub mod commands;
 pub mod mint;
-
 
 // Re-export commonly used functions and types
 pub use burn::burn_cmd;
 pub use mint::{mint_cmd, MintContext};
-

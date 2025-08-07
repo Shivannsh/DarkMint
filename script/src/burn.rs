@@ -12,10 +12,11 @@ pub async fn burn_cmd(amount: f64, priv_src: String) -> Result<(), Box<dyn std::
 
     let provider = ProviderBuilder::new()
         .wallet(signer.clone())
-        .connect(&std::env::var("RPC_URL").expect("RPC_URL must be set"))
+        .connect("https://horizen-rpc-testnet.appchain.base.org/")
         .await?;
+    println!("Provider connected");
     let wallet = Wallet::open_or_create()?;
-
+    println!("Wallet opened");
     // Find a burn address with zero balance
     let mut burn_addr = None;
     for i in 0..10 {
@@ -26,20 +27,10 @@ pub async fn burn_cmd(amount: f64, priv_src: String) -> Result<(), Box<dyn std::
             break;
         }
     }
-
+    println!("Burn address found");
     let burn_addr = burn_addr.ok_or("No available burn address found")?;
-
-    // Ask for user confirmation
-    print!(
-        "Burning {} ETH by sending them to {}. Are you sure? (Y/n): ",
-        amount, burn_addr.address
-    );
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-
-    if input.trim().to_lowercase() == "y" {
+    println!("Burn address: {}", burn_addr.address);
+    println!("Burning {} ETH by sending them to {}", amount, burn_addr.address);
         // Convert ETH to Wei
         let amount_wei = U256::from((amount * 1e18) as u64);
 
@@ -56,8 +47,8 @@ pub async fn burn_cmd(amount: f64, priv_src: String) -> Result<(), Box<dyn std::
             .from(account)
             .to(burn_addr.address)
             .value(amount_wei)
-            .nonce(nonce)
-            .gas_limit(21000);
+            .nonce(nonce);
+        println!("Transaction created");
 
         // Send transaction (provider handles signing automatically)
         let pending_tx = provider.send_transaction(tx).await?;
@@ -67,9 +58,7 @@ pub async fn burn_cmd(amount: f64, priv_src: String) -> Result<(), Box<dyn std::
         let receipt = pending_tx.get_receipt().await?;
 
         println!("Transaction sent! Hash: {:?}", receipt.transaction_hash);
-    } else {
-        println!("Burn cancelled.");
-    }
+  
 
     Ok(())
 }
