@@ -32,7 +32,7 @@ cargo build --release --bin darkmint
 # Interactive mode (will prompt for missing values)
 cargo run --bin darkmint -- burn
 
-# With all arguments
+# With all arguments 
 cargo run --bin darkmint -- burn \
   --amount 0.1 \
   --priv-src 0x1234567890abcdef... \
@@ -43,7 +43,7 @@ cargo run --bin darkmint -- burn \
 
 ```bash
 # Interactive mode (SP1_PROVER automatically set)
-NETWORK_PRIVATE_KEY=$SP1_PRIVATE_KEY cargo run --bin darkmint -- prove
+SP1_PROVER=network NETWORK_PRIVATE_KEY=$SP1_PRIVATE_KEY cargo run --bin darkmint -- prove
 
 # With all arguments (SP1_PROVER automatically set)
 NETWORK_PRIVATE_KEY=$SP1_PRIVATE_KEY \

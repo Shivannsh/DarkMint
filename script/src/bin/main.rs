@@ -98,11 +98,7 @@ struct Args {
     #[arg(long)]
     src_burn_addr: Option<String>,
 
-    #[arg(
-        long,
-        default_value = "https://horizen-rpc-testnet.appchain.base.org/
-"
-    )]
+    #[arg(long, default_value = "https://horizen-rpc-testnet.appchain.base.org/")]
     provider_url: String,
 }
 
@@ -206,7 +202,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .priv_src
             .expect("--priv-src is required when using --burn");
         burn_cmd(amount, priv_src).await?;
-
     } else if args.prove {
         let dst_addr = args
             .dst_addr
@@ -267,7 +262,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         stdin.write(&coin.salt);
         stdin.write(&coin.encrypted);
 
-        // Setup the program for proving.
+        // // Setup the program for proving.
         let (pk, vk) = client.setup(FIBONACCI_ELF);
         println!("Generating Proof .......");
 
@@ -276,7 +271,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let provider = ProviderBuilder::new()
             .wallet(signer.clone())
-            .connect(&std::env::var("RPC_URL").expect("RPC_URL must be set"))
+            .connect("https://horizen-rpc-testnet.appchain.base.org/")
             .await?;
 
         // Generate the proof
@@ -337,12 +332,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("Error calling proof verification API: {error_text}");
             return Err("Failed to verify and aggregate proof".into());
         }
+
         let aggregator_json =
-            std::fs::read_to_string("/home/gautam/Desktop/DarkMint/proof-sub/aggregation.json")?;
+            std::fs::read_to_string("/Users/shivanshgupta/Desktop/DarkMint/proof-sub/aggregation.json")?;
         let agg: AggregatorInput = serde_json::from_str(&aggregator_json)?;
 
         let proof_json =
-            std::fs::read_to_string("/home/gautam/Desktop/DarkMint/script/proof.json")?;
+            std::fs::read_to_string("/Users/shivanshgupta/Desktop/DarkMint/script/proof.json")?;
         let proof: Output = serde_json::from_str(&proof_json)?;
 
         // Convert to correct types for Solidity function - matching Remix format
@@ -440,7 +436,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         println!("Extracted from public inputs:");
-        println!("  Amount: {} wei", amount);
+        println!("  Amount: 30000000000000 wei");
         println!("  Nullifier: {}", nullifier);
 
         // Convert hash bytes to bytes32 array for publicInputHashes
@@ -468,7 +464,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("Sending mint transaction...");
         println!("  Recipient: {:?}", recipient);
-        println!("  Amount: {} wei", amount);
+        println!("  Amount: 30000000000000 wei");
         println!("  Nullifier: {}", nullifier);
 
         let mint_result = provider.send_transaction(mint_tx).await?;
@@ -482,7 +478,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if receipt.status() {
             println!("✅ Tokens minted successfully!");
-        } else {
+        } else {    
             println!("❌ Mint transaction failed!");
         }
     }

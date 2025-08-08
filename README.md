@@ -24,7 +24,7 @@ lib/src/
 └── merkle_proof.rs        # Intermediate MPT layer verification logic
 
 program/src/
-└── main.rs                # Main zkVM program for proof generation
+└── main.rs                # Main zkVM program for proof generation`
 
 script/src/
 ├── lib.rs                 # Wallet and coin management utilities
@@ -198,7 +198,7 @@ cargo run -- --burn --amount AMOUNT --priv-src $PRIVATE_KEY --provider-url $RPC_
 2. **Generate Proof to Mint Private Coins**:
 The mint command is used to mint the ETH amount related to a burnt address. to mint the total burnt amount run the mint command without --encrypted, but to mint the burnt amount partially add the --encrypted tag
 ````bash
-SP1_PROVER=network NETWORK_PRIVATE_KEY=$SP1_PRIVATE_KEY cargo run --release -- --prove --dst-addr $RECEIVING_WALLER_ADDRESS --src-burn-addr $BURN_ADDRESS_DERVIED --priv-src $PRIVATE_KEY --provider-url $RPC_URL
+ NETWORK_PRIVATE_KEY=$SP1_PRIVATE_KEY cargo run --release -- --prove --dst-addr $RECEIVING_WALLER_ADDRESS --src-burn-addr $BURN_ADDRESS_DERVIED --priv-src $PRIVATE_KEY --provider-SP1_PROVER=networkurl $RPC_URL
 ````
 
 3. **Generate Verification Key**:
@@ -210,6 +210,11 @@ cargo run --release --bin vkey
 ### Output
 
 - Proofs and public inputs are written to `proof.json` in script directory
+
+### Future Scope 
+
+- This code can be natively integrated into the wallets and the process can eased out 
+- This code Can also used as a foundation for Dark Pools and Dark Pools can easily  be created on top of it 
 
 ### 📝 Contributing
 
